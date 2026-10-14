@@ -134,11 +134,24 @@ impl System {
         SessionProxy::builder(&self.system_bus).path(path)?.build().await?.set_brightness("backlight", device, level).await
     }
 
+    /// Without UPower, a machine with no battery in sysfs is a desktop and
+    /// has no floors. A laptop without UPower reads as an error.
     pub async fn power(&self) -> zbus::Result<Power> {
-        if !self.device.is_present().await? || self.device.kind().await? != DISPLAY_DEVICE_BATTERY {
+        match self.upower_power().await {
+            Err(zbus::Error::MethodError(name, ..)) if name.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown" && !has_battery() => {
+                Ok(Power::NoBattery)
+            }
+            other => other,
+        }
+    }
+
+    async fn upower_power(&self) -> zbus::Result<Power> {
+        let device = DisplayDeviceProxy::builder(&self.system_bus).cache_properties(zbus::proxy::CacheProperties::No).build().await?;
+        let upower = UPowerProxy::builder(&self.system_bus).cache_properties(zbus::proxy::CacheProperties::No).build().await?;
+        if !device.is_present().await? || device.kind().await? != DISPLAY_DEVICE_BATTERY {
             return Ok(Power::NoBattery);
         }
-        Ok(Power::Battery { on_battery: self.upower.on_battery().await?, percent: self.device.percentage().await? })
+        Ok(Power::Battery { on_battery: upower.on_battery().await?, percent: device.percentage().await? })
     }
 
     /// power-profiles-daemon drops the hold if this connection closes.
@@ -156,6 +169,12 @@ impl System {
             eprintln!("insomnia: notification failed: {e}");
         }
     }
+}
+
+fn has_battery() -> bool {
+    std::fs::read_dir("/sys/class/power_supply").into_iter().flatten().flatten().any(|e| {
+        std::fs::read_to_string(e.path().join("type")).is_ok_and(|t| t.trim() == "Battery")
+    })
 }
 
 /// The built-in panel's backlight. Reads come from sysfs; writes go through

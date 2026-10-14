@@ -186,6 +186,19 @@ for sink in "${!baseline_mute[@]}"; do
     pactl set-sink-mute "$sink" "$([ "${baseline_mute[$sink]}" = "Mute: yes" ] && echo 1 || echo 0)"
 done
 
+sed -i 's/"darkenOnLidClose": true/"darkenOnLidClose": false/' "$home/config.json"
+kill -HUP "$daemon"
+"$bin" start 2m >/dev/null
+"$bin" simulate-lid closed >/dev/null
+eventually "a close after a SIGHUP reload still mutes" muted
+check "the reloaded config leaves the panel on" level_is "$baseline_level"
+check "the daemon survived SIGHUP" kill -0 "$daemon"
+"$bin" end >/dev/null
+"$bin" simulate-lid real >/dev/null
+sed -i 's/"darkenOnLidClose": false/"darkenOnLidClose": true/' "$home/config.json"
+kill -HUP "$daemon"
+eventually "ending unmutes after the reload test" not muted
+
 check "bad durations are refused before reaching the daemon" not "$bin" start 31d
 check "start 10m for the quit test" "$bin" start 10m
 check "quit answers" says "Insomnia quit." "$bin" quit

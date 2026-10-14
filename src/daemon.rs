@@ -10,7 +10,7 @@ use crate::tray::{self, View};
 use futures_util::StreamExt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{Instant, sleep, sleep_until};
+use tokio::time::{Instant, sleep_until};
 use zbus::zvariant::OwnedFd;
 
 pub const BUS_NAME: &str = "app.getinsomnia.Insomnia";
@@ -36,6 +36,9 @@ pub enum Event {
     Command(Command, Option<oneshot::Sender<Reply>>),
     Lid,
     Power,
+    PowerServiceChanged,
+    ProfilesServiceChanged,
+    LoginServiceChanged,
 }
 
 struct Service {
@@ -102,9 +105,9 @@ struct Daemon {
     saver_cookie: Option<u32>,
     saver_error: Option<String>,
     reminded_for: Option<u64>,
+    saver: Reversible,
     mute: Reversible,
     darken: Reversible,
-    /// Lines shown in the menu until the condition clears.
     notes: Vec<String>,
 }
 
@@ -126,16 +129,15 @@ pub async fn run() -> Result<(), String> {
     forward(sys.upower.receive_on_battery_changed().await, tx.clone(), || Event::Power);
     forward(sys.device.receive_percentage_changed().await, tx.clone(), || Event::Power);
     forward(sys.device.receive_is_present_changed().await, tx.clone(), || Event::Power);
+    forward(sys.upower.inner().receive_owner_changed().await.map_err(|e| e.to_string())?, tx.clone(), || Event::PowerServiceChanged);
+    forward(sys.profiles.inner().receive_owner_changed().await.map_err(|e| e.to_string())?, tx.clone(), || Event::ProfilesServiceChanged);
+    forward(sys.login1.inner().receive_owner_changed().await.map_err(|e| e.to_string())?, tx.clone(), || Event::LoginServiceChanged);
 
     let store = Store::from_env();
-    let (config, config_notes) = store.load_config();
-    for note in &config_notes {
-        eprintln!("insomnia: config: {note}");
-    }
     let mut d = Daemon {
         lid: sys.lid().await.unwrap_or(Lid::Open),
+        config: Config::default(),
         store,
-        config,
         sys,
         session: None,
         journal: Journal::default(),
@@ -148,18 +150,23 @@ pub async fn run() -> Result<(), String> {
         saver_cookie: None,
         saver_error: None,
         reminded_for: None,
+        saver: Reversible::default(),
         mute: Reversible::default(),
         darken: Reversible::default(),
         notes: vec![],
     };
+    d.reload_config();
     d.read_power().await;
     d.recover().await;
 
     let tray = tray::spawn(tx.clone(), d.view()).await;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).map_err(|e| e.to_string())?;
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).map_err(|e| e.to_string())?;
+    let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()).map_err(|e| e.to_string())?;
     let mut lid_settles_at: Option<Instant> = None;
     let mut shown = d.view();
+    let mut cadence = None;
+    let mut next_wake = None;
 
     loop {
         d.converge().await;
@@ -171,6 +178,10 @@ pub async fn run() -> Result<(), String> {
             tray.update(move |t| t.set_view(view)).await;
         }
         let wake = d.wake_interval();
+        if wake != cadence {
+            cadence = wake;
+            next_wake = wake.map(|duration| Instant::now() + duration);
+        }
         tokio::select! {
             event = rx.recv() => match event {
                 Some(Event::Command(Command::Quit, reply)) => {
@@ -180,10 +191,22 @@ pub async fn run() -> Result<(), String> {
                 }
                 Some(Event::Command(command, reply)) => {
                     let answer = d.handle(command).await;
-                    if let Some(reply) = reply { let _ = reply.send(answer); }
+                    if let Some(reply) = reply {
+                        let _ = reply.send(answer);
+                    } else if let Err(e) = answer {
+                        d.sys.notify("Insomnia could not complete the action", &e).await;
+                        d.note(e);
+                    }
                 }
                 Some(Event::Lid) => lid_settles_at = Some(Instant::now() + LID_DEBOUNCE),
                 Some(Event::Power) => d.read_power().await,
+                Some(Event::PowerServiceChanged) => d.read_power().await,
+                Some(Event::ProfilesServiceChanged) => {
+                    d.saver_cookie = None;
+                    d.saver = Reversible::default();
+                    d.saver_error = None;
+                }
+                Some(Event::LoginServiceChanged) => d.inhibitor = None,
                 None => break,
             },
             _ = sleep_until(lid_settles_at.unwrap_or_else(Instant::now)), if lid_settles_at.is_some() => {
@@ -193,11 +216,19 @@ pub async fn run() -> Result<(), String> {
                     Err(e) => eprintln!("insomnia: could not read the lid: {e}"),
                 }
             }
-            _ = sleep(wake.unwrap_or(Duration::MAX)), if wake.is_some() => {
+            _ = sleep_until(next_wake.unwrap_or_else(Instant::now)), if next_wake.is_some() => {
+                next_wake = wake.map(|duration| Instant::now() + duration);
                 if d.power_failures > 0 { d.read_power().await; }
+                if d.session.is_some() && lid_settles_at.is_none() {
+                    match d.sys.lid().await {
+                        Ok(lid) => d.lid = lid,
+                        Err(e) => d.note(format!("Could not read the lid: {e}")),
+                    }
+                }
             }
             _ = terminate.recv() => { d.shutdown().await; break; }
             _ = interrupt.recv() => { d.shutdown().await; break; }
+            _ = hangup.recv() => d.reload_config(),
         }
     }
     if let Some(tray) = tray {
@@ -273,7 +304,7 @@ impl Daemon {
     fn wake_interval(&self) -> Option<Duration> {
         if self.session.is_some() {
             Some(Duration::from_secs(1))
-        } else if self.journal != Journal::default() || self.power_failures > 0 {
+        } else if self.journal != Journal::default() || self.saver_cookie.is_some() || self.power_failures > 0 {
             Some(Duration::from_secs(30))
         } else {
             None
@@ -332,10 +363,11 @@ impl Daemon {
         }
     }
 
+    /// Tried once per cause, so a system without power-profiles-daemon
+    /// shows one error instead of calling it every second.
     async fn converge_saver(&mut self, plan: &Plan) {
-        let want = !plan.saver_causes.is_empty();
-        match (want, self.saver_cookie) {
-            (true, None) => {
+        match self.saver.step(!plan.saver_causes.is_empty(), self.saver_cookie.is_some()) {
+            Step::Apply => {
                 let reason = plan.saver_causes.iter().map(|c| saver_cause_text(*c)).collect::<Vec<_>>().join(", ");
                 match self.sys.hold_power_saver(&reason).await {
                     Ok(cookie) => {
@@ -350,13 +382,16 @@ impl Daemon {
                     Err(e) => self.saver_error = Some(format!("Could not switch to power saver: {e}")),
                 }
             }
-            (false, Some(cookie)) => {
-                if let Err(e) = self.sys.release_power_saver(cookie).await {
-                    eprintln!("insomnia: releasing the power-saver hold failed: {e}");
+            Step::Undo => {
+                self.saver_error = None;
+                if let Some(cookie) = self.saver_cookie {
+                    match self.sys.release_power_saver(cookie).await {
+                        Ok(()) => self.saver_cookie = None,
+                        Err(e) => self.saver_error = Some(format!("Could not release power saver: {e}")),
+                    }
                 }
-                self.saver_cookie = None;
             }
-            _ => {}
+            Step::Wait => {}
         }
     }
 
@@ -529,6 +564,16 @@ impl Daemon {
         }
     }
 
+    /// At launch and on SIGHUP (`systemctl --user reload insomnia`), so a
+    /// hand edit to config.json applies without ending the session.
+    fn reload_config(&mut self) {
+        let (config, notes) = self.store.load_config();
+        for note in notes {
+            eprintln!("insomnia: config: {note}");
+        }
+        self.config = config;
+    }
+
     fn set_config(&mut self, change: impl FnOnce(&mut Config)) -> Result<String, String> {
         let mut next = self.config.clone();
         change(&mut next);
@@ -604,8 +649,9 @@ fn saver_cause_text(cause: SaverCause) -> &'static str {
     }
 }
 
-/// One reversible lid-close action. It is applied once per close, so a
-/// close that changed nothing does not try again every tick. Its undo runs
+/// One reversible change: muting, darkening, or the power-saver hold. It is
+/// applied once each time the plan asks for it, so one that changed nothing
+/// or failed does not try again every tick. Its undo runs
 /// when the plan drops it, and again every RETRY_UNDO while the journal
 /// still holds an entry, such as a sink that is unplugged.
 #[derive(Default)]
