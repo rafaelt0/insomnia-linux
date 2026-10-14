@@ -1,0 +1,14 @@
+[Unit]
+Description=Insomnia, timed awake sessions
+Documentation=https://github.com/krishhgg/Insomnia/blob/main/linux/README.md
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/insomnia
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
