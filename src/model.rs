@@ -54,6 +54,15 @@ impl Default for Config {
 }
 
 impl Config {
+    /// What a start or extend asked for. Zero means the default preset, as
+    /// when the prompt is submitted with every field empty.
+    pub fn requested_seconds(&self, seconds: u64) -> u64 {
+        match seconds {
+            0 => self.default_minutes * 60,
+            s => s.min(MAX_SECONDS),
+        }
+    }
+
     /// Repairs a hand-edited file into a valid config. Returns what it changed
     /// so the caller can log it and write the file back.
     pub fn normalized(mut self) -> (Self, Vec<String>) {
@@ -357,6 +366,14 @@ mod tests {
         assert_eq!(format_preset(480), "8 hours");
         assert_eq!(format_preset(1440), "1 day");
         assert_eq!(format_preset(90), "1h 30m");
+    }
+
+    #[test]
+    fn an_empty_request_means_the_default_preset() {
+        let c = Config { default_minutes: 90, ..Config::default() };
+        assert_eq!(c.requested_seconds(0), 5_400);
+        assert_eq!(c.requested_seconds(120), 120);
+        assert_eq!(c.requested_seconds(u64::MAX), MAX_SECONDS);
     }
 
     #[test]

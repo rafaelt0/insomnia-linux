@@ -16,6 +16,7 @@ use zbus::zvariant::OwnedFd;
 pub const BUS_NAME: &str = "app.getinsomnia.Insomnia";
 pub const OBJECT_PATH: &str = "/app/getinsomnia/Insomnia";
 const LID_DEBOUNCE: Duration = Duration::from_secs(2);
+const RETRY_UNMUTE: Duration = Duration::from_secs(30);
 
 pub enum Command {
     Start(u64),
@@ -101,6 +102,8 @@ struct Daemon {
     saver_cookie: Option<u32>,
     saver_error: Option<String>,
     reminded_for: Option<u64>,
+    muted_this_close: bool,
+    retry_unmute_at: Instant,
     /// Lines shown in the menu until the condition clears.
     notes: Vec<String>,
 }
@@ -145,6 +148,8 @@ pub async fn run() -> Result<(), String> {
         saver_cookie: None,
         saver_error: None,
         reminded_for: None,
+        muted_this_close: false,
+        retry_unmute_at: Instant::now(),
         notes: vec![],
     };
     d.read_power().await;
@@ -345,48 +350,68 @@ impl Daemon {
     /// The journal is written before each mute and after each unmute, so a
     /// crash at any point leaves a journal that over-reports, never one that
     /// forgets a sink this app muted.
+    ///
+    /// A close mutes once. Sinks the user had muted are left out of the
+    /// journal, so they stay muted after the lid opens.
     async fn converge_mute(&mut self, mute: bool) {
-        if mute && self.journal.muted_sinks.is_empty() {
-            let sinks = match audio::sinks().await {
-                Ok(s) => s,
-                Err(e) => return self.note_audio(e),
-            };
-            let mut unmuted = Vec::new();
-            for sink in sinks {
-                match audio::is_muted(&sink).await {
-                    Ok(false) => unmuted.push(sink),
-                    Ok(true) => {}
-                    Err(e) => self.note_audio(e),
-                }
+        if mute {
+            self.retry_unmute_at = Instant::now();
+            if !self.muted_this_close {
+                self.muted_this_close = true;
+                self.mute_unmuted_sinks().await;
             }
-            if unmuted.is_empty() {
-                return;
+        } else {
+            self.muted_this_close = false;
+            if !self.journal.muted_sinks.is_empty() && Instant::now() >= self.retry_unmute_at {
+                self.retry_unmute_at = Instant::now() + RETRY_UNMUTE;
+                self.unmute_journaled_sinks().await;
             }
-            self.journal.muted_sinks = unmuted.clone();
-            if let Err(e) = self.store.save_journal(&self.journal) {
-                self.journal.muted_sinks.clear();
-                return self.note_audio(format!("Did not mute: the audio journal could not be written ({e})"));
-            }
-            for sink in unmuted {
-                if let Err(e) = audio::set_muted(&sink, true).await {
-                    self.journal.muted_sinks.retain(|s| *s != sink);
-                    self.note_audio(e);
-                }
-            }
-            self.save_journal_or_note();
-        } else if !mute && !self.journal.muted_sinks.is_empty() {
-            let present = audio::sinks().await.unwrap_or_default();
-            for sink in self.journal.muted_sinks.clone() {
-                if !present.contains(&sink) {
-                    continue;
-                }
-                match audio::set_muted(&sink, false).await {
-                    Ok(()) => self.journal.muted_sinks.retain(|s| *s != sink),
-                    Err(e) => self.note_audio(e),
-                }
-            }
-            self.save_journal_or_note();
         }
+    }
+
+    async fn mute_unmuted_sinks(&mut self) {
+        let sinks = match audio::sinks().await {
+            Ok(s) => s,
+            Err(e) => return self.note_audio(e),
+        };
+        let mut unmuted = Vec::new();
+        for sink in sinks {
+            match audio::is_muted(&sink).await {
+                Ok(false) if !self.journal.muted_sinks.contains(&sink) => unmuted.push(sink),
+                Ok(_) => {}
+                Err(e) => self.note_audio(e),
+            }
+        }
+        if unmuted.is_empty() {
+            return;
+        }
+        let mut next = self.journal.clone();
+        next.muted_sinks.extend(unmuted.iter().cloned());
+        if let Err(e) = self.store.save_journal(&next) {
+            return self.note_audio(format!("Did not mute: the audio journal could not be written ({e})"));
+        }
+        self.journal = next;
+        for sink in unmuted {
+            if let Err(e) = audio::set_muted(&sink, true).await {
+                self.note_audio(e);
+            }
+        }
+    }
+
+    /// A sink that is not connected keeps its entry and is tried again
+    /// every RETRY_UNMUTE, so reconnecting it later still unmutes it.
+    async fn unmute_journaled_sinks(&mut self) {
+        let present = audio::sinks().await.unwrap_or_default();
+        for sink in self.journal.muted_sinks.clone() {
+            if !present.contains(&sink) {
+                continue;
+            }
+            match audio::set_muted(&sink, false).await {
+                Ok(()) => self.journal.muted_sinks.retain(|s| *s != sink),
+                Err(e) => self.note_audio(e),
+            }
+        }
+        self.save_journal_or_note();
     }
 
     fn note_audio(&mut self, line: String) {
@@ -421,6 +446,7 @@ impl Daemon {
     async fn handle(&mut self, command: Command) -> Result<String, String> {
         match command {
             Command::Start(seconds) => {
+                let seconds = self.config.requested_seconds(seconds);
                 if let Some(s) = self.session {
                     return Err(format!("A session is already running until {}. Use extend to add time.", self.until(s)));
                 }
@@ -436,6 +462,7 @@ impl Daemon {
                 Ok(format!("Keeping awake until {}.", self.until(session)))
             }
             Command::Extend(seconds) => {
+                let seconds = self.config.requested_seconds(seconds);
                 let s = self.session.ok_or("No session is running.")?.extended(now(), seconds);
                 self.store.save_session(&s).map_err(|e| format!("Could not write the session file: {e}"))?;
                 self.session = Some(s);

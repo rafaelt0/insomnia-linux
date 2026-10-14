@@ -38,7 +38,7 @@ enum Cli {
 fn parse(args: &[String]) -> Result<Cli, String> {
     let rest = || args[1..].join(" ");
     let one = |what: &str| match args.len() {
-        2 => Ok(()),
+        1 => Ok(()),
         _ => Err(format!("`insomnia {what}` takes no arguments")),
     };
     let Some(verb) = args.first() else { return Ok(Cli::Daemon) };
