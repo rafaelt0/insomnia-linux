@@ -10,7 +10,7 @@ use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 const CSS: &str = r#"
 window.insomnia-prompt { background: none; }
-.panel { background: alpha(#202224, 0.94); border-radius: 18px; padding: 10px 12px; border: 1px solid alpha(#E6E3DD, 0.12); }
+.panel { background: alpha(#202224, 0.98); border-radius: 18px; padding: 10px 12px; border: 1px solid alpha(#E6E3DD, 0.12); }
 .title { color: #E6E3DD; font-weight: 600; margin: 0 6px; }
 entry.pill { background: alpha(#E6E3DD, 0.08); color: #E6E3DD; border-radius: 999px; border: none; outline: none;
              box-shadow: none; min-height: 30px; padding: 0 12px; transition: background 150ms ease, box-shadow 250ms ease; }
@@ -62,6 +62,7 @@ fn build(app: &gtk4::Application, extend: bool) {
                 .xalign(0.5)
                 .build();
             entry.add_css_class("pill");
+            entry.update_property(&[gtk4::accessible::Property::Label(unit)]);
             entry
         })
         .collect();
@@ -96,6 +97,9 @@ fn build(app: &gtk4::Application, extend: bool) {
 }
 
 fn submit(fields: &[gtk4::Entry], hint: &gtk4::Label, window: &gtk4::ApplicationWindow, extend: bool) {
+    if !fields[0].is_sensitive() {
+        return;
+    }
     let show_error = |message: String| {
         hint.set_label(&message);
         hint.add_css_class("error");
@@ -120,11 +124,26 @@ fn submit(fields: &[gtk4::Entry], hint: &gtk4::Label, window: &gtk4::Application
             Err(e) => return show_error(e),
         }
     };
-    let result = client::call(|proxy| async move {
-        if extend { proxy.extend(seconds).await } else { proxy.start(seconds).await }
+    fields.iter().for_each(|field| field.set_sensitive(false));
+    hint.remove_css_class("error");
+    hint.set_label(if extend { "Adding time…" } else { "Starting session…" });
+    let (fields, hint, window) = (fields.to_vec(), hint.clone(), window.clone());
+    glib::spawn_future_local(async move {
+        let result = gtk4::gio::spawn_blocking(move || {
+            client::call(|proxy| async move {
+                if extend { proxy.extend(seconds).await } else { proxy.start(seconds).await }
+            })
+        })
+        .await
+        .unwrap_or_else(|_| Err("The session request failed.".into()));
+        match result {
+            Ok(_) => window.close(),
+            Err(e) => {
+                fields.iter().for_each(|field| field.set_sensitive(true));
+                hint.set_label(&e);
+                hint.add_css_class("error");
+                fields[0].grab_focus();
+            }
+        }
     });
-    match result {
-        Ok(_) => window.close(),
-        Err(e) => show_error(e),
-    }
 }
