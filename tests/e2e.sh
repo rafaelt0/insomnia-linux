@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Drives a real daemon against the real logind, power-profiles-daemon and
-# PipeWire on this machine. It mutes every output for a few seconds and holds
-# power-saver briefly, then puts back what it found.
+# PipeWire on this machine. It mutes every output and turns the panel off for
+# a few seconds, holds power-saver briefly, then puts back what it found.
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -20,6 +20,10 @@ failures=0
 daemon=
 
 baseline_profile=$(powerprofilesctl get)
+panel=$(for d in /sys/class/backlight/*; do echo "$(sed 's/firmware/0/;s/platform/1/;s/raw/2/' "$d/type") ${d##*/}"; done | sort | head -1 | cut -d' ' -f2)
+baseline_level=$(cat "/sys/class/backlight/$panel/brightness")
+session_path=$(busctl --system get-property org.freedesktop.login1 /org/freedesktop/login1/user/self org.freedesktop.login1.User Display | cut -d'"' -f4)
+set_level() { busctl --system call org.freedesktop.login1 "$session_path" org.freedesktop.login1.Session SetBrightness ssu backlight "$panel" "$1"; }
 declare -A baseline_mute
 while read -r sink; do baseline_mute[$sink]=$(pactl get-sink-mute "$sink"); done < <(pactl list short sinks | cut -f2)
 module=$(pactl load-module module-null-sink sink_name=insomnia_e2e)
@@ -36,6 +40,11 @@ cleanup() {
         pactl set-sink-mute "$sink" "$([ "${baseline_mute[$sink]}" = "Mute: yes" ] && echo 1 || echo 0)"
         failures=$((failures + 1))
     done
+    if [ "$(cat "/sys/class/backlight/$panel/brightness")" != "$baseline_level" ]; then
+        echo "FAIL  the panel ended at $(cat "/sys/class/backlight/$panel/brightness"), not $baseline_level; putting it back"
+        set_level "$baseline_level"
+        failures=$((failures + 1))
+    fi
     if [ "$(powerprofilesctl get)" != "$baseline_profile" ]; then
         echo "FAIL  the power profile ended as $(powerprofilesctl get), not $baseline_profile"
         failures=$((failures + 1))
@@ -70,6 +79,7 @@ inhibiting() { systemd-inhibit --list --no-pager | grep -E '^Insomnia .*sleep:ha
 not() { ! "$@"; }
 muted() { [ "$(pactl get-sink-mute insomnia_e2e)" = "Mute: yes" ]; }
 profile_is() { [ "$(powerprofilesctl get)" = "$1" ]; }
+level_is() { [ "$(cat "/sys/class/backlight/$panel/brightness")" = "$1" ]; }
 status_has() { "$bin" status | grep -q "$1"; }
 says() { local want=$1 out; shift; out=$("$@" 2>&1); grep -q "$want" <<<"$out"; }
 
@@ -87,24 +97,48 @@ check "the lid stays open, so nothing is muted" not muted
 check "simulating a closed lid is accepted" "$bin" simulate-lid closed
 eventually "a closed lid mutes the outputs" muted
 eventually "a closed lid holds power-saver" profile_is power-saver
+eventually "a closed lid turns the panel off" level_is 0
+check "the journal saves the panel level" grep -q "\"level\": $baseline_level" "$home/journal.json"
 check "the mute journal names the test sink" grep -q insomnia_e2e "$home/journal.json"
 check "status shows the closed lid" status_has "Lid closed (simulated)"
 
 check "simulating an open lid is accepted" "$bin" simulate-lid open
 eventually "an open lid unmutes" not muted
 eventually "an open lid gives the profile back" profile_is "$baseline_profile"
+eventually "an open lid puts the panel level back" level_is "$baseline_level"
+
+check "simulating a docked close is accepted" "$bin" simulate-lid docked
+eventually "a docked close turns the panel off" level_is 0
+sleep 1
+check "a docked close leaves the audio alone" not muted
+check "a docked close leaves the power profile alone" profile_is "$baseline_profile"
+check "status says the lid is docked" status_has "docked"
+"$bin" simulate-lid open >/dev/null
+eventually "opening after a docked close puts the panel back" level_is "$baseline_level"
+
+"$bin" simulate-lid closed >/dev/null
+eventually "the panel is off for the hand-set test" level_is 0
+set_level 1234 >/dev/null
+"$bin" simulate-lid open >/dev/null
+eventually "an open unmutes after the hand-set test" not muted
+check "a level set by hand during the close is kept" level_is 1234
+check "the kept level clears the journal entry" not grep -q '"backlight": {' "$home/journal.json"
+set_level "$baseline_level" >/dev/null
 
 check "closing again mutes again" "$bin" simulate-lid closed
 eventually "the second close mutes" muted
+eventually "the second close turns the panel off" level_is 0
 kill -9 "$daemon"; wait "$daemon" 2>/dev/null
 eventually "logind drops the block when the daemon dies" not inhibiting
 eventually "power-profiles-daemon drops the hold when the daemon dies" profile_is "$baseline_profile"
 check "the mute outlives the crash, journaled" muted
+check "the dark panel outlives the crash, journaled" level_is 0
 
 start_daemon
 check "the restarted daemon resumes the session" status_has "Awake until"
 eventually "the resumed session blocks sleep again" inhibiting
 eventually "the restart unmutes what the crashed run muted" not muted
+eventually "the restart puts the panel level back" level_is "$baseline_level"
 check "the journal is empty after the restore" not grep -q insomnia_e2e "$home/journal.json"
 
 before=$(sed -n 's/.*"endsAt": \([0-9]*\).*/\1/p' "$home/session.json")
@@ -132,6 +166,7 @@ eventually "the deadline ends the session" status_has "No session."
 eventually "the deadline releases the block" not inhibiting
 eventually "the deadline unmutes even with the lid still closed" not muted
 eventually "the deadline gives the profile back" profile_is "$baseline_profile"
+eventually "the deadline puts the panel back with the lid still closed" level_is "$baseline_level"
 "$bin" simulate-lid real >/dev/null
 
 check "a 2 minute session starts with every output muted by the user" "$bin" start 2m
@@ -168,4 +203,5 @@ kill -TERM "$daemon"; wait "$daemon"; code=$?
 daemon=
 check "SIGTERM exits 0" test "$code" -eq 0
 check "SIGTERM unmutes" not muted
+check "SIGTERM puts the panel back" level_is "$baseline_level"
 check "SIGTERM ends the session" test ! -e "$home/session.json"

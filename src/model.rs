@@ -36,6 +36,7 @@ pub struct Config {
     pub default_minutes: u64,
     pub mute_on_lid_close: bool,
     pub power_saver_on_lid_close: bool,
+    pub darken_on_lid_close: bool,
     pub low_power_floor: u8,
     pub end_floor: u8,
 }
@@ -47,13 +48,50 @@ impl Default for Config {
             default_minutes: 60,
             mute_on_lid_close: true,
             power_saver_on_lid_close: true,
+            darken_on_lid_close: true,
             low_power_floor: 40,
             end_floor: 10,
         }
     }
 }
 
+/// The switches for what a lid close does, in the order the tray lists them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LidSetting {
+    Mute,
+    PowerSaver,
+    Darken,
+}
+
+impl LidSetting {
+    pub const ALL: [LidSetting; 3] = [LidSetting::Darken, LidSetting::Mute, LidSetting::PowerSaver];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LidSetting::Darken => "Turn the screen off when the lid closes",
+            LidSetting::Mute => "Mute audio when the lid closes",
+            LidSetting::PowerSaver => "Power saver when the lid closes",
+        }
+    }
+}
+
 impl Config {
+    pub fn lid_setting(&self, setting: LidSetting) -> bool {
+        match setting {
+            LidSetting::Mute => self.mute_on_lid_close,
+            LidSetting::PowerSaver => self.power_saver_on_lid_close,
+            LidSetting::Darken => self.darken_on_lid_close,
+        }
+    }
+
+    pub fn set_lid_setting(&mut self, setting: LidSetting, on: bool) {
+        match setting {
+            LidSetting::Mute => self.mute_on_lid_close = on,
+            LidSetting::PowerSaver => self.power_saver_on_lid_close = on,
+            LidSetting::Darken => self.darken_on_lid_close = on,
+        }
+    }
+
     /// What a start or extend asked for. Zero means the default preset, as
     /// when the prompt is submitted with every field empty.
     pub fn requested_seconds(&self, seconds: u64) -> u64 {
@@ -97,6 +135,15 @@ impl Config {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lid {
+    Open,
+    Closed,
+    /// Closed with an external display or dock attached, which logind
+    /// takes to mean someone is still working. Only the panel goes dark.
+    ClosedDocked,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Power {
     /// No internal battery: no floor applies.
@@ -134,7 +181,7 @@ pub enum SaverCause {
 pub struct Facts<'a> {
     pub now: u64,
     pub session: Option<Session>,
-    pub lid_closed: bool,
+    pub lid: Lid,
     pub power: Power,
     pub config: &'a Config,
 }
@@ -144,6 +191,7 @@ pub struct Plan {
     pub keep_awake: bool,
     pub saver_causes: Vec<SaverCause>,
     pub mute: bool,
+    pub darken: bool,
     pub remind: bool,
     pub end: Option<EndReason>,
 }
@@ -171,13 +219,15 @@ pub fn plan(f: &Facts) -> Plan {
     {
         saver_causes.push(SaverCause::BatteryFloor);
     }
-    if f.lid_closed && c.power_saver_on_lid_close {
+    let away = f.lid == Lid::Closed;
+    if away && c.power_saver_on_lid_close {
         saver_causes.push(SaverCause::LidClosed);
     }
     Plan {
         keep_awake: true,
         saver_causes,
-        mute: f.lid_closed && c.mute_on_lid_close,
+        mute: away && c.mute_on_lid_close,
+        darken: f.lid != Lid::Open && c.darken_on_lid_close,
         remind: session.remaining(f.now) <= REMIND_BEFORE_END,
         end: None,
     }
@@ -259,8 +309,8 @@ pub fn format_preset(minutes: u64) -> String {
 mod tests {
     use super::*;
 
-    fn facts(config: &Config, session: Option<Session>, lid_closed: bool, power: Power) -> Facts<'_> {
-        Facts { now: 1_000, session, lid_closed, power, config }
+    fn facts(config: &Config, session: Option<Session>, lid: Lid, power: Power) -> Facts<'_> {
+        Facts { now: 1_000, session, lid, power, config }
     }
 
     const ACTIVE: Option<Session> = Some(Session { started_at: 0, ends_at: 5_000 });
@@ -269,61 +319,68 @@ mod tests {
     #[test]
     fn idle_holds_nothing_even_with_the_lid_closed() {
         let c = Config::default();
-        assert_eq!(plan(&facts(&c, None, true, DRAINING_AT(5.0))), Plan::default());
+        assert_eq!(plan(&facts(&c, None, Lid::Closed, DRAINING_AT(5.0))), Plan::default());
     }
 
     #[test]
     fn open_lid_on_charger_only_keeps_awake() {
         let c = Config::default();
-        let p = plan(&facts(&c, ACTIVE, false, Power::Battery { on_battery: false, percent: 20.0 }));
+        let p = plan(&facts(&c, ACTIVE, Lid::Open, Power::Battery { on_battery: false, percent: 20.0 }));
         assert_eq!(p, Plan { keep_awake: true, ..Plan::default() });
     }
 
     #[test]
     fn closed_lid_mutes_and_saves_power() {
         let c = Config::default();
-        let p = plan(&facts(&c, ACTIVE, true, Power::NoBattery));
-        assert_eq!(p, Plan { keep_awake: true, saver_causes: vec![SaverCause::LidClosed], mute: true, ..Plan::default() });
+        let p = plan(&facts(&c, ACTIVE, Lid::Closed, Power::NoBattery));
+        assert_eq!(p, Plan { keep_awake: true, saver_causes: vec![SaverCause::LidClosed], mute: true, darken: true, ..Plan::default() });
+    }
+
+    #[test]
+    fn a_docked_close_only_darkens_the_panel() {
+        let c = Config::default();
+        let p = plan(&facts(&c, ACTIVE, Lid::ClosedDocked, Power::NoBattery));
+        assert_eq!(p, Plan { keep_awake: true, darken: true, ..Plan::default() });
     }
 
     #[test]
     fn lid_actions_follow_their_switches() {
-        let c = Config { mute_on_lid_close: false, power_saver_on_lid_close: false, ..Config::default() };
-        let p = plan(&facts(&c, ACTIVE, true, Power::NoBattery));
+        let c = Config { mute_on_lid_close: false, power_saver_on_lid_close: false, darken_on_lid_close: false, ..Config::default() };
+        let p = plan(&facts(&c, ACTIVE, Lid::Closed, Power::NoBattery));
         assert_eq!(p, Plan { keep_awake: true, ..Plan::default() });
     }
 
     #[test]
     fn battery_floors() {
         let c = Config::default();
-        assert_eq!(plan(&facts(&c, ACTIVE, false, DRAINING_AT(40.0))).saver_causes, vec![]);
-        assert_eq!(plan(&facts(&c, ACTIVE, false, DRAINING_AT(39.9))).saver_causes, vec![SaverCause::BatteryFloor]);
-        assert_eq!(plan(&facts(&c, ACTIVE, false, DRAINING_AT(9.0))).end, Some(EndReason::BatteryLow(10)));
+        assert_eq!(plan(&facts(&c, ACTIVE, Lid::Open, DRAINING_AT(40.0))).saver_causes, vec![]);
+        assert_eq!(plan(&facts(&c, ACTIVE, Lid::Open, DRAINING_AT(39.9))).saver_causes, vec![SaverCause::BatteryFloor]);
+        assert_eq!(plan(&facts(&c, ACTIVE, Lid::Open, DRAINING_AT(9.0))).end, Some(EndReason::BatteryLow(10)));
         let off = Config { end_floor: 0, ..Config::default() };
-        assert_eq!(plan(&facts(&off, ACTIVE, false, DRAINING_AT(1.0))).end, None);
+        assert_eq!(plan(&facts(&off, ACTIVE, Lid::Open, DRAINING_AT(1.0))).end, None);
     }
 
     #[test]
     fn unreadable_battery_ends_only_when_the_end_floor_is_on() {
         let c = Config::default();
-        assert_eq!(plan(&facts(&c, ACTIVE, false, Power::Unreadable)).end, Some(EndReason::BatteryUnreadable));
+        assert_eq!(plan(&facts(&c, ACTIVE, Lid::Open, Power::Unreadable)).end, Some(EndReason::BatteryUnreadable));
         let off = Config { end_floor: 0, ..Config::default() };
-        assert_eq!(plan(&facts(&off, ACTIVE, false, Power::Unreadable)).end, None);
+        assert_eq!(plan(&facts(&off, ACTIVE, Lid::Open, Power::Unreadable)).end, None);
     }
 
     #[test]
     fn deadline_ends_and_releases_everything() {
         let c = Config::default();
         let expired = Some(Session { started_at: 0, ends_at: 1_000 });
-        assert_eq!(plan(&facts(&c, expired, true, Power::NoBattery)), Plan { end: Some(EndReason::Deadline), ..Plan::default() });
+        assert_eq!(plan(&facts(&c, expired, Lid::Closed, Power::NoBattery)), Plan { end: Some(EndReason::Deadline), ..Plan::default() });
     }
 
     #[test]
     fn reminds_in_the_last_five_minutes() {
         let c = Config::default();
         let soon = Some(Session { started_at: 0, ends_at: 1_300 });
-        assert!(plan(&facts(&c, soon, false, Power::NoBattery)).remind);
-        assert!(!plan(&facts(&c, ACTIVE, false, Power::NoBattery)).remind);
+        assert!(plan(&facts(&c, soon, Lid::Open, Power::NoBattery)).remind);
+        assert!(!plan(&facts(&c, ACTIVE, Lid::Open, Power::NoBattery)).remind);
     }
 
     #[test]

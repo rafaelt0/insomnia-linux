@@ -1,5 +1,5 @@
 //! Owner-only JSON files. Only state that outlives the process lives here:
-//! the session deadline and the sinks a lid close muted. Sleep inhibition and
+//! the session deadline and what a lid close muted or darkened. Sleep inhibition and
 //! the power-saver hold are released by logind and power-profiles-daemon when
 //! the process exits, so they have no journal.
 
@@ -10,11 +10,19 @@ use std::io::{ErrorKind, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
+/// What a lid close changed and has not put back yet.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Journal {
-    /// PulseAudio sink names this app muted and has not unmuted yet.
+    /// PulseAudio sink names this app muted.
     pub muted_sinks: Vec<String>,
+    pub backlight: Option<SavedBacklight>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SavedBacklight {
+    pub device: String,
+    pub level: u32,
 }
 
 pub enum Loaded<T> {

@@ -1,7 +1,7 @@
 //! Adapters for the services Insomnia drives. Everything here talks to the
 //! outside world and returns domain values; no policy lives here.
 
-use crate::model::Power;
+use crate::model::{Lid, Power};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::process::Command;
@@ -16,6 +16,23 @@ pub trait Login1 {
     fn inhibit(&self, what: &str, who: &str, why: &str, mode: &str) -> zbus::Result<OwnedFd>;
     #[zbus(property)]
     fn lid_closed(&self) -> zbus::Result<bool>;
+    #[zbus(property(emits_changed_signal = "false"))]
+    fn docked(&self) -> zbus::Result<bool>;
+}
+
+#[zbus::proxy(
+    interface = "org.freedesktop.login1.User",
+    default_service = "org.freedesktop.login1",
+    default_path = "/org/freedesktop/login1/user/self"
+)]
+pub trait User {
+    #[zbus(property)]
+    fn display(&self) -> zbus::Result<(String, zbus::zvariant::OwnedObjectPath)>;
+}
+
+#[zbus::proxy(interface = "org.freedesktop.login1.Session", default_service = "org.freedesktop.login1")]
+pub trait Session {
+    fn set_brightness(&self, subsystem: &str, name: &str, brightness: u32) -> zbus::Result<()>;
 }
 
 #[zbus::proxy(interface = "org.freedesktop.UPower", default_service = "org.freedesktop.UPower", default_path = "/org/freedesktop/UPower")]
@@ -77,6 +94,8 @@ pub struct System {
     pub device: DisplayDeviceProxy<'static>,
     pub profiles: PowerProfilesProxy<'static>,
     notifications: NotificationsProxy<'static>,
+    user: UserProxy<'static>,
+    system_bus: zbus::Connection,
 }
 
 impl System {
@@ -88,6 +107,8 @@ impl System {
             device: DisplayDeviceProxy::new(&system_bus).await?,
             profiles: PowerProfilesProxy::new(&system_bus).await?,
             notifications: NotificationsProxy::new(session_bus).await?,
+            user: UserProxy::new(&system_bus).await?,
+            system_bus,
         })
     }
 
@@ -98,8 +119,19 @@ impl System {
         self.login1.inhibit("sleep:handle-lid-switch", "Insomnia", why, "block").await
     }
 
-    pub async fn lid_closed(&self) -> zbus::Result<bool> {
-        self.login1.lid_closed().await
+    pub async fn lid(&self) -> zbus::Result<Lid> {
+        Ok(match (self.login1.lid_closed().await?, self.login1.docked().await?) {
+            (false, _) => Lid::Open,
+            (true, false) => Lid::Closed,
+            (true, true) => Lid::ClosedDocked,
+        })
+    }
+
+    /// Goes through the graphical session, since a user service is in no
+    /// session of its own and logind lets a session's owner set its backlight.
+    pub async fn set_backlight(&self, device: &str, level: u32) -> zbus::Result<()> {
+        let (_, path) = self.user.display().await?;
+        SessionProxy::builder(&self.system_bus).path(path)?.build().await?.set_brightness("backlight", device, level).await
     }
 
     pub async fn power(&self) -> zbus::Result<Power> {
@@ -123,6 +155,36 @@ impl System {
         if let Err(e) = self.notifications.notify("Insomnia", 0, "", summary, body, &[], hints, -1).await {
             eprintln!("insomnia: notification failed: {e}");
         }
+    }
+}
+
+/// The built-in panel's backlight. Reads come from sysfs; writes go through
+/// logind, which needs no root.
+pub mod backlight {
+    use std::fs;
+    use std::path::Path;
+
+    const ROOT: &str = "/sys/class/backlight";
+
+    /// The device a desktop's brightness keys would pick: firmware (ACPI)
+    /// over platform over raw, as gnome-settings-daemon and powerdevil do.
+    pub fn device() -> Option<String> {
+        let rank = |kind: &str| ["firmware", "platform", "raw"].iter().position(|k| *k == kind);
+        fs::read_dir(ROOT)
+            .ok()?
+            .filter_map(|e| {
+                let name = e.ok()?.file_name().into_string().ok()?;
+                let kind = fs::read_to_string(Path::new(ROOT).join(&name).join("type")).ok()?;
+                Some((rank(kind.trim())?, name))
+            })
+            .min()
+            .map(|(_, name)| name)
+    }
+
+    pub fn level(device: &str) -> Result<u32, String> {
+        let path = Path::new(ROOT).join(device).join("brightness");
+        let text = fs::read_to_string(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+        text.trim().parse().map_err(|_| format!("{} holds {:?}, not a number", path.display(), text.trim()))
     }
 }
 

@@ -2,21 +2,20 @@
 //! clicks into daemon commands; it holds no session state of its own.
 
 use crate::daemon::{Command, Event};
-use crate::model::format_preset;
+use crate::model::{LidSetting, format_preset};
 use ksni::menu::{CheckmarkItem, StandardItem};
 use ksni::{MenuItem, TrayMethods};
 use std::sync::OnceLock;
 use tokio::sync::mpsc;
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct View {
     pub remaining: Option<String>,
     pub until: Option<String>,
     pub lines: Vec<String>,
     pub waiting_sinks: Vec<String>,
     pub presets: Vec<u64>,
-    pub mute_on_lid_close: bool,
-    pub power_saver_on_lid_close: bool,
+    pub lid_settings: [(LidSetting, bool); 3],
 }
 
 pub struct Tray {
@@ -109,24 +108,17 @@ impl ksni::Tray for Tray {
             items.push(action(format!("Stop waiting to unmute {sink}"), move |t| t.send(Command::StopWaitingFor(name.clone()))));
         }
         items.push(MenuItem::Separator);
-        items.push(
-            CheckmarkItem {
-                label: "Mute audio when the lid closes".into(),
-                checked: v.mute_on_lid_close,
-                activate: Box::new(|t: &mut Tray| t.send(Command::SetMuteOnLidClose(!t.view.mute_on_lid_close))),
-                ..Default::default()
-            }
-            .into(),
-        );
-        items.push(
-            CheckmarkItem {
-                label: "Power saver when the lid closes".into(),
-                checked: v.power_saver_on_lid_close,
-                activate: Box::new(|t: &mut Tray| t.send(Command::SetPowerSaverOnLidClose(!t.view.power_saver_on_lid_close))),
-                ..Default::default()
-            }
-            .into(),
-        );
+        for (setting, on) in v.lid_settings {
+            items.push(
+                CheckmarkItem {
+                    label: setting.label().into(),
+                    checked: on,
+                    activate: Box::new(move |t: &mut Tray| t.send(Command::SetLidSetting(setting, !on))),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
         items.push(action(if v.remaining.is_some() { "Quit and end the session" } else { "Quit" }, |t| t.send(Command::Quit)));
         items
     }

@@ -3,9 +3,9 @@
 //! step compares what is held against the plan, so running it twice, or after
 //! a crash, ends in the same place.
 
-use crate::model::{self, Config, EndReason, Facts, Plan, Power, SaverCause, Session};
-use crate::store::{Journal, Loaded, Store};
-use crate::system::{self, System, audio};
+use crate::model::{self, Config, EndReason, Facts, Lid, LidSetting, Plan, Power, SaverCause, Session};
+use crate::store::{Journal, Loaded, SavedBacklight, Store};
+use crate::system::{self, System, audio, backlight};
 use crate::tray::{self, View};
 use futures_util::StreamExt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -16,7 +16,7 @@ use zbus::zvariant::OwnedFd;
 pub const BUS_NAME: &str = "app.getinsomnia.Insomnia";
 pub const OBJECT_PATH: &str = "/app/getinsomnia/Insomnia";
 const LID_DEBOUNCE: Duration = Duration::from_secs(2);
-const RETRY_UNMUTE: Duration = Duration::from_secs(30);
+const RETRY_UNDO: Duration = Duration::from_secs(30);
 
 pub enum Command {
     Start(u64),
@@ -25,10 +25,9 @@ pub enum Command {
     Status,
     Quit,
     OpenPrompt,
-    SetMuteOnLidClose(bool),
-    SetPowerSaverOnLidClose(bool),
+    SetLidSetting(LidSetting, bool),
     StopWaitingFor(String),
-    SimulateLid(Option<bool>),
+    SimulateLid(Option<Lid>),
 }
 
 pub type Reply = Result<String, String>;
@@ -61,13 +60,14 @@ impl Service {
         self.ask(Command::Quit).await
     }
     /// Only answers when the daemon was started with INSOMNIA_ALLOW_LID_SIMULATION=1.
-    /// "closed", "open", or "real" to follow the hardware again.
+    /// "closed", "docked", "open", or "real" to follow the hardware again.
     async fn simulate_lid(&self, state: &str) -> zbus::fdo::Result<String> {
         let lid = match state {
-            "closed" => Some(true),
-            "open" => Some(false),
+            "closed" => Some(Lid::Closed),
+            "docked" => Some(Lid::ClosedDocked),
+            "open" => Some(Lid::Open),
             "real" => None,
-            other => return Err(zbus::fdo::Error::InvalidArgs(format!("expected closed, open or real, not {other:?}"))),
+            other => return Err(zbus::fdo::Error::InvalidArgs(format!("expected closed, docked, open or real, not {other:?}"))),
         };
         self.ask(Command::SimulateLid(lid)).await
     }
@@ -92,8 +92,8 @@ struct Daemon {
     sys: System,
     session: Option<Session>,
     journal: Journal,
-    lid_closed: bool,
-    lid_override: Option<bool>,
+    lid: Lid,
+    lid_override: Option<Lid>,
     allow_lid_simulation: bool,
     power: Power,
     power_failures: u32,
@@ -102,8 +102,8 @@ struct Daemon {
     saver_cookie: Option<u32>,
     saver_error: Option<String>,
     reminded_for: Option<u64>,
-    muted_this_close: bool,
-    retry_unmute_at: Instant,
+    mute: Reversible,
+    darken: Reversible,
     /// Lines shown in the menu until the condition clears.
     notes: Vec<String>,
 }
@@ -133,7 +133,7 @@ pub async fn run() -> Result<(), String> {
         eprintln!("insomnia: config: {note}");
     }
     let mut d = Daemon {
-        lid_closed: sys.lid_closed().await.unwrap_or(false),
+        lid: sys.lid().await.unwrap_or(Lid::Open),
         store,
         config,
         sys,
@@ -148,8 +148,8 @@ pub async fn run() -> Result<(), String> {
         saver_cookie: None,
         saver_error: None,
         reminded_for: None,
-        muted_this_close: false,
-        retry_unmute_at: Instant::now(),
+        mute: Reversible::default(),
+        darken: Reversible::default(),
         notes: vec![],
     };
     d.read_power().await;
@@ -159,11 +159,15 @@ pub async fn run() -> Result<(), String> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).map_err(|e| e.to_string())?;
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()).map_err(|e| e.to_string())?;
     let mut lid_settles_at: Option<Instant> = None;
+    let mut shown = d.view();
 
     loop {
         d.converge().await;
-        if let Some(tray) = &tray {
-            let view = d.view();
+        let view = d.view();
+        if let Some(tray) = &tray
+            && view != shown
+        {
+            shown = view.clone();
             tray.update(move |t| t.set_view(view)).await;
         }
         let wake = d.wake_interval();
@@ -184,8 +188,8 @@ pub async fn run() -> Result<(), String> {
             },
             _ = sleep_until(lid_settles_at.unwrap_or_else(Instant::now)), if lid_settles_at.is_some() => {
                 lid_settles_at = None;
-                match d.sys.lid_closed().await {
-                    Ok(closed) => d.lid_closed = closed,
+                match d.sys.lid().await {
+                    Ok(lid) => d.lid = lid,
                     Err(e) => eprintln!("insomnia: could not read the lid: {e}"),
                 }
             }
@@ -221,7 +225,7 @@ impl Daemon {
             Loaded::Ok(j) => self.journal = j,
             Loaded::Missing => {}
             Loaded::MovedAside(to) => self.notes.push(format!(
-                "The audio journal could not be read and was moved to {}. Check that your outputs are not left muted.",
+                "The lid-close journal could not be read and was moved to {}. Check that your outputs are not left muted and the screen is not left dark.",
                 to.display()
             )),
         }
@@ -244,7 +248,7 @@ impl Daemon {
         Facts {
             now: now(),
             session: self.session,
-            lid_closed: self.lid_override.unwrap_or(self.lid_closed),
+            lid: self.lid_override.unwrap_or(self.lid),
             power: self.power,
             config: &self.config,
         }
@@ -269,7 +273,7 @@ impl Daemon {
     fn wake_interval(&self) -> Option<Duration> {
         if self.session.is_some() {
             Some(Duration::from_secs(1))
-        } else if !self.journal.muted_sinks.is_empty() || self.power_failures > 0 {
+        } else if self.journal != Journal::default() || self.power_failures > 0 {
             Some(Duration::from_secs(30))
         } else {
             None
@@ -286,7 +290,16 @@ impl Daemon {
         };
         self.converge_inhibitor(&plan).await;
         self.converge_saver(&plan).await;
-        self.converge_mute(plan.mute).await;
+        match self.mute.step(plan.mute, !self.journal.muted_sinks.is_empty()) {
+            Step::Apply => self.mute_unmuted_sinks().await,
+            Step::Undo => self.unmute_journaled_sinks().await,
+            Step::Wait => {}
+        }
+        match self.darken.step(plan.darken, self.journal.backlight.is_some()) {
+            Step::Apply => self.darken_panel().await,
+            Step::Undo => self.restore_panel().await,
+            Step::Wait => {}
+        }
         if let Some(s) = self.session
             && plan.remind
             && self.reminded_for != Some(s.ends_at)
@@ -347,39 +360,21 @@ impl Daemon {
         }
     }
 
-    /// The journal is written before each mute and after each unmute, so a
+    /// The journal is written before each change and after each undo, so a
     /// crash at any point leaves a journal that over-reports, never one that
-    /// forgets a sink this app muted.
-    ///
-    /// A close mutes once. Sinks the user had muted are left out of the
-    /// journal, so they stay muted after the lid opens.
-    async fn converge_mute(&mut self, mute: bool) {
-        if mute {
-            self.retry_unmute_at = Instant::now();
-            if !self.muted_this_close {
-                self.muted_this_close = true;
-                self.mute_unmuted_sinks().await;
-            }
-        } else {
-            self.muted_this_close = false;
-            if !self.journal.muted_sinks.is_empty() && Instant::now() >= self.retry_unmute_at {
-                self.retry_unmute_at = Instant::now() + RETRY_UNMUTE;
-                self.unmute_journaled_sinks().await;
-            }
-        }
-    }
-
+    /// forgets something this app changed. Sinks the user had muted are left
+    /// out, so they stay muted after the lid opens.
     async fn mute_unmuted_sinks(&mut self) {
         let sinks = match audio::sinks().await {
             Ok(s) => s,
-            Err(e) => return self.note_audio(e),
+            Err(e) => return self.note(e),
         };
         let mut unmuted = Vec::new();
         for sink in sinks {
             match audio::is_muted(&sink).await {
                 Ok(false) if !self.journal.muted_sinks.contains(&sink) => unmuted.push(sink),
                 Ok(_) => {}
-                Err(e) => self.note_audio(e),
+                Err(e) => self.note(e),
             }
         }
         if unmuted.is_empty() {
@@ -388,18 +383,18 @@ impl Daemon {
         let mut next = self.journal.clone();
         next.muted_sinks.extend(unmuted.iter().cloned());
         if let Err(e) = self.store.save_journal(&next) {
-            return self.note_audio(format!("Did not mute: the audio journal could not be written ({e})"));
+            return self.note(format!("Did not mute: the audio journal could not be written ({e})"));
         }
         self.journal = next;
         for sink in unmuted {
             if let Err(e) = audio::set_muted(&sink, true).await {
-                self.note_audio(e);
+                self.note(e);
             }
         }
     }
 
-    /// A sink that is not connected keeps its entry and is tried again
-    /// every RETRY_UNMUTE, so reconnecting it later still unmutes it.
+    /// A sink that is not connected keeps its entry, so reconnecting it
+    /// later still unmutes it.
     async fn unmute_journaled_sinks(&mut self) {
         let present = audio::sinks().await.unwrap_or_default();
         for sink in self.journal.muted_sinks.clone() {
@@ -408,14 +403,47 @@ impl Daemon {
             }
             match audio::set_muted(&sink, false).await {
                 Ok(()) => self.journal.muted_sinks.retain(|s| *s != sink),
-                Err(e) => self.note_audio(e),
+                Err(e) => self.note(e),
             }
         }
         self.save_journal_or_note();
     }
 
-    fn note_audio(&mut self, line: String) {
-        eprintln!("insomnia: audio: {line}");
+    /// A panel already at 0 is left out of the journal, like a muted sink.
+    async fn darken_panel(&mut self) {
+        let Some(device) = backlight::device() else { return };
+        let level = match backlight::level(&device) {
+            Ok(0) => return,
+            Ok(level) => level,
+            Err(e) => return self.note(e),
+        };
+        let next = Journal { backlight: Some(SavedBacklight { device: device.clone(), level }), ..self.journal.clone() };
+        if let Err(e) = self.store.save_journal(&next) {
+            return self.note(format!("Did not turn the screen off: the lid-close journal could not be written ({e})"));
+        }
+        self.journal = next;
+        if let Err(e) = self.sys.set_backlight(&device, 0).await {
+            self.note(format!("Could not turn the screen off: {e}"));
+        }
+    }
+
+    /// Puts the saved level back only while the panel is still at 0. A level
+    /// someone set by hand meanwhile stays.
+    async fn restore_panel(&mut self) {
+        let Some(saved) = self.journal.backlight.clone() else { return };
+        match backlight::level(&saved.device) {
+            Ok(0) => match self.sys.set_backlight(&saved.device, saved.level).await {
+                Ok(()) => self.journal.backlight = None,
+                Err(e) => return self.note(format!("Could not turn the screen back on: {e}. Use the brightness keys.")),
+            },
+            Ok(_) => self.journal.backlight = None,
+            Err(e) => return self.note(e),
+        }
+        self.save_journal_or_note();
+    }
+
+    fn note(&mut self, line: String) {
+        eprintln!("insomnia: {line}");
         if !self.notes.contains(&line) {
             self.notes.push(line);
         }
@@ -423,7 +451,7 @@ impl Daemon {
 
     fn save_journal_or_note(&mut self) {
         if let Err(e) = self.store.save_journal(&self.journal) {
-            self.note_audio(format!("The audio journal could not be written: {e}"));
+            self.note(format!("The lid-close journal could not be written: {e}"));
         }
     }
 
@@ -484,8 +512,7 @@ impl Daemon {
                 prompt.spawn().map_err(|e| format!("Could not open the time entry: {e}"))?;
                 Ok(String::new())
             }
-            Command::SetMuteOnLidClose(on) => self.set_config(|c| c.mute_on_lid_close = on),
-            Command::SetPowerSaverOnLidClose(on) => self.set_config(|c| c.power_saver_on_lid_close = on),
+            Command::SetLidSetting(setting, on) => self.set_config(|c| c.set_lid_setting(setting, on)),
             Command::StopWaitingFor(sink) => {
                 self.journal.muted_sinks.retain(|s| *s != sink);
                 self.save_journal_or_note();
@@ -516,12 +543,12 @@ impl Daemon {
 
     fn lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
-        let lid_closed = self.lid_override.unwrap_or(self.lid_closed);
-        lines.push(format!(
-            "Lid {}{}",
-            if lid_closed { "closed" } else { "open" },
-            if self.lid_override.is_some() { " (simulated)" } else { "" }
-        ));
+        let lid = match self.lid_override.unwrap_or(self.lid) {
+            Lid::Open => "Lid open",
+            Lid::Closed => "Lid closed",
+            Lid::ClosedDocked => "Lid closed, docked: audio and power profile left alone",
+        };
+        lines.push(format!("{lid}{}", if self.lid_override.is_some() { " (simulated)" } else { "" }));
         lines.push(match self.power {
             Power::NoBattery => "No battery".into(),
             Power::Battery { on_battery, percent } => {
@@ -534,6 +561,9 @@ impl Daemon {
         }
         if !self.journal.muted_sinks.is_empty() {
             lines.push(format!("Muted {}", self.journal.muted_sinks.join(", ")));
+        }
+        if let Some(saved) = &self.journal.backlight {
+            lines.push(format!("Screen off, saved at level {}", saved.level));
         }
         lines.extend(self.inhibit_error.iter().cloned());
         lines.extend(self.saver_error.iter().cloned());
@@ -562,8 +592,7 @@ impl Daemon {
             lines: self.lines(),
             waiting_sinks: if muting { vec![] } else { self.journal.muted_sinks.clone() },
             presets: self.config.presets_minutes.clone(),
-            mute_on_lid_close: self.config.mute_on_lid_close,
-            power_saver_on_lid_close: self.config.power_saver_on_lid_close,
+            lid_settings: LidSetting::ALL.map(|s| (s, self.config.lid_setting(s))),
         }
     }
 }
@@ -572,5 +601,57 @@ fn saver_cause_text(cause: SaverCause) -> &'static str {
     match cause {
         SaverCause::BatteryFloor => "battery below the low-power floor",
         SaverCause::LidClosed => "lid closed during an Insomnia session",
+    }
+}
+
+/// One reversible lid-close action. It is applied once per close, so a
+/// close that changed nothing does not try again every tick. Its undo runs
+/// when the plan drops it, and again every RETRY_UNDO while the journal
+/// still holds an entry, such as a sink that is unplugged.
+#[derive(Default)]
+struct Reversible {
+    applied: bool,
+    retry_at: Option<Instant>,
+}
+
+#[derive(Debug, PartialEq)]
+enum Step {
+    Apply,
+    Undo,
+    Wait,
+}
+
+impl Reversible {
+    fn step(&mut self, want: bool, journaled: bool) -> Step {
+        let now = Instant::now();
+        if want {
+            self.retry_at = None;
+            return if std::mem::replace(&mut self.applied, true) { Step::Wait } else { Step::Apply };
+        }
+        self.applied = false;
+        if !journaled || self.retry_at.is_some_and(|at| now < at) {
+            return Step::Wait;
+        }
+        self.retry_at = Some(now + RETRY_UNDO);
+        Step::Undo
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_reversible_action_applies_once_per_close_and_retries_its_undo() {
+        let mut r = Reversible::default();
+        assert_eq!(r.step(false, true), Step::Undo, "a journal left by a crash is undone at launch");
+        assert_eq!(r.step(false, true), Step::Wait);
+        tokio::time::advance(RETRY_UNDO).await;
+        assert_eq!(r.step(false, true), Step::Undo, "an entry that stays is retried");
+        assert_eq!(r.step(true, true), Step::Apply);
+        assert_eq!(r.step(true, false), Step::Wait, "a close that changed nothing does not try again");
+        assert_eq!(r.step(false, true), Step::Undo, "an open undoes at once");
+        assert_eq!(r.step(false, false), Step::Wait);
+        assert_eq!(r.step(true, false), Step::Apply, "the next close applies again");
     }
 }
