@@ -17,7 +17,11 @@ case "$family" in
     *" arch "*)
         packages=(gtk4 gtk4-layer-shell pkgconf jq libpulse)
         [ -n "$have_cargo" ] || packages+=(rust)
-        $sudo pacman -S --needed --noconfirm "${packages[@]}" ;;
+        # Arch supports only full upgrades, so this asks before upgrading the
+        # system too, unless nobody is at a terminal to answer.
+        confirm=()
+        [ -t 0 ] || confirm=(--noconfirm)
+        $sudo pacman -Syu --needed "${confirm[@]}" "${packages[@]}" ;;
     *" fedora "*)
         packages=(gcc gtk4-devel gtk4-layer-shell-devel pkgconf-pkg-config jq pulseaudio-utils)
         [ -n "$have_cargo" ] || packages+=(cargo)

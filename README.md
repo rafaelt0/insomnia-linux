@@ -20,7 +20,8 @@ insomnia start 20m
 ```
 
 `deps.sh` installs the build and runtime packages with your distribution's
-package manager, and asks for your password through `sudo`:
+package manager, and asks for your password through `sudo`. On Arch it runs
+`pacman -Syu`, which also upgrades the rest of the system and asks first:
 
 | Distribution | Packages |
 | --- | --- |
