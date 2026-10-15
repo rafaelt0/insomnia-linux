@@ -17,7 +17,7 @@ if ! "$bin" status | grep -q '^No session.'; then
 fi
 
 prompt_open() { pgrep -f "^$bin prompt" >/dev/null; }
-# shellcheck disable=SC2317 # only called through check
+# shellcheck disable=SC2317,SC2329 # only called through check
 prompt_closed() { ! prompt_open; }
 key() { hyprctl dispatch "hl.dsp.send_shortcut({ mods = \"\", key = \"$1\" })" >/dev/null; sleep 1; }
 open_from_tray() {
