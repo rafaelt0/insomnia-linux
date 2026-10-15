@@ -1,6 +1,6 @@
 [Unit]
 Description=Insomnia, timed awake sessions
-Documentation=https://github.com/krishhgg/Insomnia/blob/main/linux/README.md
+Documentation=https://github.com/rafaelt0/insomnia-linux#readme
 PartOf=graphical-session.target
 After=graphical-session.target
 

@@ -4,7 +4,8 @@ Keep your computer awake for a set time, including with the lid closed.
 The eye in the tray opens a days, hours, and minutes prompt. Right-click it
 for presets, session controls, and lid settings.
 
-This is a native Rust port with a GTK 4 prompt and a StatusNotifierItem tray.
+This is a Linux rewrite of [Insomnia for macOS](https://github.com/krishhgg/Insomnia)
+in Rust, with a GTK 4 prompt and a StatusNotifierItem tray.
 It is experimental. The desktop tested here is CachyOS with Hyprland and
 Noctalia. Other desktops can use the CLI even without a tray host.
 
@@ -21,7 +22,7 @@ server. The power-saver action needs power-profiles-daemon with its hold API.
 Run from the repository root:
 
 ```bash
-./linux/install.sh
+./install.sh
 insomnia status
 insomnia start 20m
 ```
@@ -120,8 +121,8 @@ systemd-inhibit --list
 ## Uninstall
 
 ```bash
-./linux/uninstall.sh
-./linux/uninstall.sh --purge
+./uninstall.sh
+./uninstall.sh --purge
 ```
 
 The uninstaller stops the service and ends its session. It refuses to remove
@@ -131,8 +132,8 @@ journal remains. Settings and state stay unless you pass `--purge`.
 ## Development and validation
 
 ```bash
-cargo test --locked --manifest-path linux/Cargo.toml
-cargo clippy --locked --manifest-path linux/Cargo.toml --all-targets -- -D warnings
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
 ```
 
 `tests/services.rs` runs the daemon on a private D-Bus with service fixtures.
@@ -145,7 +146,7 @@ backlight and power-profiles-daemon, while you can observe the screen:
 
 ```bash
 systemctl --user stop insomnia
-./linux/tests/e2e.sh
+./tests/e2e.sh
 systemctl --user start insomnia
 ```
 

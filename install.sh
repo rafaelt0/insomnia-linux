@@ -49,7 +49,7 @@ while IFS= read -r line; do
         *) printf '%s\n' "$line" ;;
     esac
 done <"$here/packaging/insomnia.desktop" >"$data_dir/applications/insomnia.desktop"
-cp "$here/../docs/assets/eye-open.svg" "$data_dir/icons/hicolor/scalable/apps/insomnia.svg"
+cp "$here/packaging/insomnia.svg" "$data_dir/icons/hicolor/scalable/apps/insomnia.svg"
 if command -v update-desktop-database >/dev/null; then
     update-desktop-database -q "$data_dir/applications" || true
 fi
