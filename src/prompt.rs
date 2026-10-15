@@ -6,7 +6,6 @@ use crate::client;
 use crate::model::seconds_from_fields;
 use gtk4::prelude::*;
 use gtk4::{gdk, glib};
-use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 const CSS: &str = r#"
 window.insomnia-prompt { background: none; }
@@ -40,16 +39,7 @@ fn build(app: &gtk4::Application, extend: bool) {
 
     let window = gtk4::ApplicationWindow::builder().application(app).title("Insomnia").resizable(false).build();
     window.add_css_class("insomnia-prompt");
-    if gtk4_layer_shell::is_supported() {
-        window.init_layer_shell();
-        window.set_namespace(Some("insomnia"));
-        window.set_layer(Layer::Overlay);
-        window.set_anchor(Edge::Top, true);
-        window.set_anchor(Edge::Right, true);
-        window.set_margin(Edge::Top, 8);
-        window.set_margin(Edge::Right, 8);
-        window.set_keyboard_mode(KeyboardMode::Exclusive);
-    }
+    pin_top_right(&window);
 
     let fields: Vec<gtk4::Entry> = ["Days", "Hours", "Minutes"]
         .iter()
@@ -95,6 +85,25 @@ fn build(app: &gtk4::Application, extend: bool) {
     window.present();
     fields[0].grab_focus();
 }
+
+#[cfg(feature = "layer-shell")]
+fn pin_top_right(window: &gtk4::ApplicationWindow) {
+    use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
+    if !gtk4_layer_shell::is_supported() {
+        return;
+    }
+    window.init_layer_shell();
+    window.set_namespace(Some("insomnia"));
+    window.set_layer(Layer::Overlay);
+    window.set_anchor(Edge::Top, true);
+    window.set_anchor(Edge::Right, true);
+    window.set_margin(Edge::Top, 8);
+    window.set_margin(Edge::Right, 8);
+    window.set_keyboard_mode(KeyboardMode::Exclusive);
+}
+
+#[cfg(not(feature = "layer-shell"))]
+fn pin_top_right(_window: &gtk4::ApplicationWindow) {}
 
 fn submit(fields: &[gtk4::Entry], hint: &gtk4::Label, window: &gtk4::ApplicationWindow, extend: bool) {
     if !fields[0].is_sensitive() {

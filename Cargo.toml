@@ -8,7 +8,7 @@ publish = false
 [dependencies]
 futures-util = { version = "0.3", default-features = false }
 gtk4 = { version = "0.10", features = ["v4_12"] }
-gtk4-layer-shell = "0.7"
+gtk4-layer-shell = { version = "0.7", optional = true }
 ksni = "0.3"
 libc = "0.2"
 resvg = { version = "0.45", default-features = false }
@@ -16,6 +16,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "macros", "time", "sync", "process", "signal"] }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[features]
+default = ["layer-shell"]
+# Pins the prompt to the top right on wlroots, Hyprland and KDE. Without it,
+# or on desktops without the protocol, the prompt is an ordinary window.
+layer-shell = ["dep:gtk4-layer-shell"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
