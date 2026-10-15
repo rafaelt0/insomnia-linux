@@ -9,28 +9,43 @@ in Rust, with a GTK 4 prompt and a StatusNotifierItem tray.
 It is experimental. The desktop tested here is CachyOS with Hyprland and
 Noctalia. Other desktops can use the CLI even without a tray host.
 
-## Install from this checkout
+## Install
 
-Install Rust with Cargo, a C compiler, pkg-config, and GTK 4.12 or newer
-development files. The installer also checks for `pactl`, `jq`, `systemctl`,
-and `busctl`.
+```bash
+git clone https://github.com/rafaelt0/insomnia-linux.git
+cd insomnia-linux
+./deps.sh
+./install.sh
+insomnia start 20m
+```
+
+`deps.sh` installs the build and runtime packages with your distribution's
+package manager, and asks for your password through `sudo`. On Arch it runs
+`pacman -Syu`, which also upgrades the rest of the system and asks first:
+
+| Distribution | Packages |
+| --- | --- |
+| Arch, CachyOS, EndeavourOS, Manjaro | `rust gtk4 gtk4-layer-shell pkgconf jq libpulse` |
+| Fedora | `cargo gcc gtk4-devel gtk4-layer-shell-devel pkgconf-pkg-config jq pulseaudio-utils` |
+| openSUSE Tumbleweed | `cargo gcc gtk4-devel gtk4-layer-shell-devel pkgconf jq pulseaudio-utils` |
+| Debian, Ubuntu | `build-essential libgtk-4-dev pkg-config jq pulseaudio-utils cargo`, plus `libgtk4-layer-shell-dev` where it exists |
+
+It needs Rust 1.89 or newer. Debian 13 and Ubuntu 24.04 package an older Rust.
+There, `deps.sh` stops and asks you to install Rust with
+[rustup](https://rustup.rs), then run it again. It leaves an existing Rust
+alone. The [Distributions](.github/workflows/distros.yml) workflow runs these
+steps on fresh Arch, Fedora, openSUSE, Debian 13, Ubuntu 24.04 and Ubuntu 26.04
+containers every week.
 
 gtk4-layer-shell is optional. With it, the prompt pins itself to the top right
 of the screen on Hyprland, Sway and other wlroots compositors, and on KDE.
 Without it, as on Ubuntu 24.04, which does not package it, the prompt opens as
 an ordinary window. The installer picks whichever applies.
 
-The desktop needs systemd-logind and a user D-Bus session. Laptops need UPower
-for battery protection. Audio muting uses PulseAudio or PipeWire's PulseAudio
-server. The power-saver action needs power-profiles-daemon with its hold API.
-
-Run from the repository root:
-
-```bash
-./install.sh
-insomnia status
-insomnia start 20m
-```
+The desktop needs systemd-logind and a user D-Bus session, so distributions
+without systemd are not supported. Laptops need UPower for battery protection.
+Audio muting uses PulseAudio or PipeWire's PulseAudio server. The power-saver
+action needs power-profiles-daemon with its hold API.
 
 The installer builds a release binary, installs it at `~/.local/bin/insomnia`,
 and starts a systemd user service. It installs a desktop launcher and eye icon

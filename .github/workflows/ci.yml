@@ -35,8 +35,8 @@ jobs:
         run: |
           cargo test --locked
           cargo clippy --locked --all-targets -- -D warnings
-          bash -n install.sh uninstall.sh tests/e2e.sh tests/prompt.sh tests/uninstall.sh
-          shellcheck install.sh uninstall.sh tests/e2e.sh tests/prompt.sh tests/uninstall.sh
+          bash -n deps.sh install.sh uninstall.sh tests/e2e.sh tests/prompt.sh tests/uninstall.sh
+          shellcheck deps.sh install.sh uninstall.sh tests/e2e.sh tests/prompt.sh tests/uninstall.sh
           desktop-file-validate packaging/insomnia.desktop
           tests/uninstall.sh
       - name: Build release
