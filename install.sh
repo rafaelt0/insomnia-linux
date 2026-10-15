@@ -11,12 +11,18 @@ bin_dir="$HOME/.local/bin"
 data_dir="${XDG_DATA_HOME:-$HOME/.local/share}"
 unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
+# A release download carries prebuilt binaries in bin/. A checkout builds one.
+release=
+if [ -x "$here/bin/insomnia" ]; then release=yes; fi
+
 missing=()
-for cmd in cargo pkg-config pactl systemctl busctl jq; do
+needed=(pactl systemctl busctl jq)
+[ -n "$release" ] || needed+=(cargo pkg-config)
+for cmd in "${needed[@]}"; do
     command -v "$cmd" >/dev/null || missing+=("$cmd")
 done
-if command -v pkg-config >/dev/null; then
-pkg-config --atleast-version=4.12 gtk4 || missing+=("GTK 4.12 or newer development files")
+if [ -z "$release" ] && command -v pkg-config >/dev/null; then
+    pkg-config --atleast-version=4.12 gtk4 || missing+=("GTK 4.12 or newer development files")
 fi
 if [ ${#missing[@]} -gt 0 ]; then
     printf 'Missing:\n' >&2
@@ -29,16 +35,30 @@ done
 busctl --system status org.freedesktop.UPower.PowerProfiles >/dev/null 2>&1 ||
     echo "Note: power-profiles-daemon is not running, so the power-saver lid action will report an error." >&2
 
-features=()
-if ! pkg-config --exists gtk4-layer-shell-0; then
-    echo "Note: gtk4-layer-shell is not installed, so the prompt opens as an ordinary window." >&2
-    features=(--no-default-features)
+unresolved() { ldd "$1" | grep 'not found'; }
+if [ -n "$release" ]; then
+    binary="$here/bin/insomnia"
+    if unresolved "$binary" >/dev/null; then
+        echo "Note: gtk4-layer-shell is not installed, so the prompt opens as an ordinary window." >&2
+        binary="$here/bin/insomnia-plain"
+    fi
+    if unresolved "$binary" >&2; then
+        echo "Install GTK 4.12 or newer (gtk4, or libgtk-4-1 on Debian and Ubuntu), then run this again." >&2
+        exit 1
+    fi
+else
+    features=()
+    if ! pkg-config --exists gtk4-layer-shell-0; then
+        echo "Note: gtk4-layer-shell is not installed, so the prompt opens as an ordinary window." >&2
+        features=(--no-default-features)
+    fi
+    cargo build --release --locked "${features[@]}" --manifest-path "$here/Cargo.toml"
+    binary="$here/target/release/insomnia"
 fi
-cargo build --release --locked "${features[@]}" --manifest-path "$here/Cargo.toml"
 
 mkdir -p "$bin_dir" "$unit_dir" "$data_dir/applications" "$data_dir/icons/hicolor/scalable/apps"
 # Copy, then rename over the old binary, which may be running.
-cp "$here/target/release/insomnia" "$bin_dir/.insomnia.new"
+cp "$binary" "$bin_dir/.insomnia.new"
 chmod 755 "$bin_dir/.insomnia.new"
 mv -f "$bin_dir/.insomnia.new" "$bin_dir/insomnia"
 cp "$here/packaging/insomnia.service" "$unit_dir/insomnia.service"

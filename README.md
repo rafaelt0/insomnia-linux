@@ -57,6 +57,21 @@ session. To open the prompt from your application launcher, choose **Insomnia**.
 If your desktop does not start `graphical-session.target`, run
 `systemctl --user start insomnia` after login.
 
+## Install a release without building
+
+Each [release](https://github.com/rafaelt0/insomnia-linux/releases) has a
+download for x86_64 that needs no Rust. It runs on distributions at least as
+new as Ubuntu 24.04, and needs GTK 4.12 or newer.
+
+```bash
+tar -xJf insomnia-VERSION-x86_64-linux.tar.xz
+cd insomnia-VERSION-x86_64-linux
+./install.sh
+```
+
+It carries two builds. `install.sh` uses the one that pins the prompt to the
+top right when gtk4-layer-shell is installed, and the plain one otherwise.
+
 ## Use the CLI
 
 ```bash
