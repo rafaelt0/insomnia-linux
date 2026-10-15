@@ -1,4 +1,4 @@
-//! Adapters for the services Insomnia drives. Everything here talks to the
+//! Adapters for the services Insomnia Awake drives. Everything here talks to the
 //! outside world and returns domain values; no policy lives here.
 
 use crate::model::{Lid, Power};
@@ -85,7 +85,7 @@ pub trait Notifications {
     ) -> zbus::Result<u32>;
 }
 
-pub const APP_ID: &str = "app.getinsomnia.Insomnia";
+pub const APP_ID: &str = "io.github.rafaelt0.InsomniaAwake";
 const DISPLAY_DEVICE_BATTERY: u32 = 2;
 
 pub struct System {
@@ -116,7 +116,7 @@ impl System {
     /// lasts as long as the returned descriptor stays open, so it also ends
     /// when this process dies.
     pub async fn inhibit_sleep(&self, why: &str) -> zbus::Result<OwnedFd> {
-        self.login1.inhibit("sleep:handle-lid-switch", "Insomnia", why, "block").await
+        self.login1.inhibit("sleep:handle-lid-switch", "Insomnia Awake", why, "block").await
     }
 
     pub async fn lid(&self) -> zbus::Result<Lid> {
@@ -164,9 +164,9 @@ impl System {
     }
 
     pub async fn notify(&self, summary: &str, body: &str) {
-        let hints = HashMap::from([("desktop-entry", Value::from("insomnia"))]);
-        if let Err(e) = self.notifications.notify("Insomnia", 0, "", summary, body, &[], hints, -1).await {
-            eprintln!("insomnia: notification failed: {e}");
+        let hints = HashMap::from([("desktop-entry", Value::from("insomnia-awake"))]);
+        if let Err(e) = self.notifications.notify("Insomnia Awake", 0, "", summary, body, &[], hints, -1).await {
+            eprintln!("insomnia-awake: notification failed: {e}");
         }
     }
 }

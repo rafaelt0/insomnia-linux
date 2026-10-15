@@ -30,7 +30,7 @@ impl Tray {
 
     fn send(&self, command: Command) {
         if self.events.try_send(Event::Command(command, None)).is_err() {
-            eprintln!("insomnia: tray command dropped: the daemon is busy or gone");
+            eprintln!("insomnia-awake: tray command dropped: the daemon is busy or gone");
         }
     }
 }
@@ -39,7 +39,7 @@ pub async fn spawn(events: mpsc::Sender<Event>, view: View) -> Option<ksni::Hand
     match (Tray { events, view }).assume_sni_available(true).spawn().await {
         Ok(handle) => Some(handle),
         Err(e) => {
-            eprintln!("insomnia: no tray icon ({e}); the insomnia command still works");
+            eprintln!("insomnia-awake: no tray icon ({e}); the insomnia-awake command still works");
             None
         }
     }
@@ -55,20 +55,20 @@ fn line(label: impl Into<String>) -> MenuItem<Tray> {
 
 impl ksni::Tray for Tray {
     fn id(&self) -> String {
-        "insomnia".into()
+        "insomnia-awake".into()
     }
 
     fn title(&self) -> String {
         match &self.view.remaining {
-            Some(left) => format!("Insomnia · {left}"),
-            None => "Insomnia".into(),
+            Some(left) => format!("Insomnia Awake · {left}"),
+            None => "Insomnia Awake".into(),
         }
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
         let title = match (&self.view.remaining, &self.view.until) {
             (Some(left), Some(until)) => format!("Awake until {until} · {left} left"),
-            _ => "Insomnia · not keeping awake".into(),
+            _ => "Insomnia Awake · not keeping awake".into(),
         };
         ksni::ToolTip { title, description: self.view.lines.join("\n"), ..Default::default() }
     }

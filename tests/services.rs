@@ -103,7 +103,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("insomnia-services-{}-{stamp}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("insomnia-awake-services-{}-{stamp}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();
         let mut bus = Command::new("dbus-daemon").args(["--session", "--nofork", "--print-address=1"]).stdout(Stdio::piped()).spawn().unwrap();
         let mut address = String::new();
@@ -114,7 +114,7 @@ impl Fixture {
     fn spawn_daemon(&mut self) {
         std::fs::write(self.dir.join("config.json"), r#"{"muteOnLidClose":false,"darkenOnLidClose":false}"#).unwrap();
         self.daemon = Some(
-            Command::new(env!("CARGO_BIN_EXE_insomnia"))
+            Command::new(env!("CARGO_BIN_EXE_insomnia-awake"))
                 .env("DBUS_SYSTEM_BUS_ADDRESS", &self.address)
                 .env("DBUS_SESSION_BUS_ADDRESS", &self.address)
                 .env("INSOMNIA_HOME", &self.dir)
@@ -201,7 +201,7 @@ async fn exercise(fixture: &mut Fixture) {
     let profiles = fixture.profiles(holds.clone()).await;
     fixture.spawn_daemon();
     let client = Builder::address(fixture.address.as_str()).unwrap().build().await.unwrap();
-    let proxy = zbus::Proxy::new(&client, "app.getinsomnia.Insomnia", "/app/getinsomnia/Insomnia", "app.getinsomnia.Insomnia1").await.unwrap();
+    let proxy = zbus::Proxy::new(&client, "io.github.rafaelt0.InsomniaAwake", "/io/github/rafaelt0/InsomniaAwake", "io.github.rafaelt0.InsomniaAwake1").await.unwrap();
     eventually("daemon ready", 5, || async { proxy.call::<_, _, String>("Status", &()).await.is_ok() }).await;
     let _: String = proxy.call("Start", &(120u64,)).await.unwrap();
     eventually("closed lid holds power saver", 3, || async { holds.active.load(SeqCst) }).await;

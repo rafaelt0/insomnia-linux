@@ -35,10 +35,11 @@ jobs:
         run: |
           cargo test --locked
           cargo clippy --locked --all-targets -- -D warnings
-          bash -n deps.sh packaging/release.sh install.sh uninstall.sh tests/e2e.sh tests/prompt.sh tests/uninstall.sh
-          shellcheck deps.sh packaging/release.sh install.sh uninstall.sh tests/e2e.sh tests/prompt.sh tests/uninstall.sh
-          desktop-file-validate packaging/insomnia.desktop
+          bash -n deps.sh packaging/release.sh install.sh uninstall.sh tests/*.sh
+          shellcheck deps.sh packaging/release.sh install.sh uninstall.sh tests/*.sh
+          desktop-file-validate packaging/insomnia-awake.desktop
           tests/uninstall.sh
+          tests/deps.sh
       - name: Build release
         run: cargo build --release --locked
 
@@ -62,4 +63,4 @@ jobs:
       - name: Check the binary does not need gtk4-layer-shell
         run: |
           cargo build --release --locked --no-default-features
-          ! ldd target/release/insomnia | grep -q layer-shell
+          ! ldd target/release/insomnia-awake | grep -q layer-shell

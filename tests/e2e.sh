@@ -6,10 +6,10 @@ set -uo pipefail
 
 here=$(cd "$(dirname "$0")/.." && pwd)
 cargo build --quiet --manifest-path "$here/Cargo.toml" || exit 1
-bin="$here/target/debug/insomnia"
+bin="$here/target/debug/insomnia-awake"
 
-if busctl --user status app.getinsomnia.Insomnia >/dev/null 2>&1; then
-    echo "An Insomnia daemon is already running. Stop it first (systemctl --user stop insomnia)." >&2
+if busctl --user status io.github.rafaelt0.InsomniaAwake >/dev/null 2>&1; then
+    echo "An Insomnia Awake daemon is already running. Stop it first (systemctl --user stop insomnia-awake)." >&2
     exit 1
 fi
 
@@ -72,10 +72,10 @@ eventually() {
 start_daemon() {
     PATH="$home/bin:$PATH" "$bin" >>"$log" 2>&1 &
     daemon=$!
-    eventually "the daemon claims its bus name" busctl --user status app.getinsomnia.Insomnia
+    eventually "the daemon claims its bus name" busctl --user status io.github.rafaelt0.InsomniaAwake
 }
 
-inhibiting() { systemd-inhibit --list --no-pager | grep -E '^Insomnia .*sleep:handle-lid-switch.*block'; }
+inhibiting() { systemd-inhibit --list --no-pager | grep -E '^Insomnia Awake .*sleep:handle-lid-switch.*block'; }
 not() { ! "$@"; }
 muted() { [ "$(pactl get-sink-mute insomnia_e2e)" = "Mute: yes" ]; }
 profile_is() { [ "$(powerprofilesctl get)" = "$1" ]; }
@@ -201,7 +201,7 @@ eventually "ending unmutes after the reload test" not muted
 
 check "bad durations are refused before reaching the daemon" not "$bin" start 31d
 check "start 10m for the quit test" "$bin" start 10m
-check "quit answers" says "Insomnia quit." "$bin" quit
+check "quit answers" says "Insomnia Awake quit." "$bin" quit
 wait "$daemon"; code=$?
 daemon=
 check "the daemon exits 0 on quit" test "$code" -eq 0

@@ -48,8 +48,8 @@ impl Store {
         match std::env::var_os("INSOMNIA_HOME") {
             Some(home) => Store { state_dir: home.clone().into(), config_dir: home.into() },
             None => Store {
-                state_dir: env_dir("XDG_STATE_HOME", ".local/state").join("insomnia"),
-                config_dir: env_dir("XDG_CONFIG_HOME", ".config").join("insomnia"),
+                state_dir: env_dir("XDG_STATE_HOME", ".local/state").join("insomnia-awake"),
+                config_dir: env_dir("XDG_CONFIG_HOME", ".config").join("insomnia-awake"),
             },
         }
     }
@@ -153,7 +153,7 @@ mod tests {
     use super::*;
 
     fn temp_store() -> (Store, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("insomnia-store-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let dir = std::env::temp_dir().join(format!("insomnia-awake-store-{}-{:?}", std::process::id(), std::thread::current().id()));
         let _ = fs::remove_dir_all(&dir);
         (Store { state_dir: dir.join("state"), config_dir: dir.join("config") }, dir)
     }

@@ -3,7 +3,7 @@
 use crate::daemon::{BUS_NAME, OBJECT_PATH};
 use std::future::Future;
 
-#[zbus::proxy(interface = "app.getinsomnia.Insomnia1", default_service = "app.getinsomnia.Insomnia", default_path = "/app/getinsomnia/Insomnia")]
+#[zbus::proxy(interface = "io.github.rafaelt0.InsomniaAwake1", default_service = "io.github.rafaelt0.InsomniaAwake", default_path = "/io/github/rafaelt0/InsomniaAwake")]
 pub trait Insomnia {
     fn start(&self, seconds: u64) -> zbus::Result<String>;
     fn extend(&self, seconds: u64) -> zbus::Result<String>;
@@ -32,12 +32,12 @@ where
             .map_err(|e| e.to_string())?;
         f(proxy).await.map_err(|e| match e {
             zbus::Error::MethodError(name, _, _) if name.as_str() == "org.freedesktop.DBus.Error.ServiceUnknown" => {
-                "Insomnia is not running. Start it with `systemctl --user start insomnia` or run `insomnia`.".to_string()
+                "Insomnia Awake is not running. Start it with `systemctl --user start insomnia-awake` or run `insomnia-awake`.".to_string()
             }
             zbus::Error::MethodError(_, Some(message), _) => message,
             zbus::Error::FDO(e) => match *e {
                 zbus::fdo::Error::ServiceUnknown(_) => {
-                    "Insomnia is not running. Start it with `systemctl --user start insomnia` or run `insomnia`.".to_string()
+                    "Insomnia Awake is not running. Start it with `systemctl --user start insomnia-awake` or run `insomnia-awake`.".to_string()
                 }
                 zbus::fdo::Error::Failed(message) => message,
                 other => other.to_string(),

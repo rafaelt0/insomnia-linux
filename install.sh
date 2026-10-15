@@ -13,7 +13,7 @@ unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
 # A release download carries prebuilt binaries in bin/. A checkout builds one.
 release=
-if [ -x "$here/bin/insomnia" ]; then release=yes; fi
+if [ -x "$here/bin/insomnia-awake" ]; then release=yes; fi
 
 missing=()
 needed=(pactl systemctl busctl jq)
@@ -37,10 +37,10 @@ busctl --system status org.freedesktop.UPower.PowerProfiles >/dev/null 2>&1 ||
 
 unresolved() { ldd "$1" | grep 'not found'; }
 if [ -n "$release" ]; then
-    binary="$here/bin/insomnia"
+    binary="$here/bin/insomnia-awake"
     if unresolved "$binary" >/dev/null; then
         echo "Note: gtk4-layer-shell is not installed, so the prompt opens as an ordinary window." >&2
-        binary="$here/bin/insomnia-plain"
+        binary="$here/bin/insomnia-awake-plain"
     fi
     if unresolved "$binary" >&2; then
         echo "Install GTK 4.12 or newer (gtk4, or libgtk-4-1 on Debian and Ubuntu), then run this again." >&2
@@ -53,15 +53,15 @@ else
         features=(--no-default-features)
     fi
     cargo build --release --locked "${features[@]}" --manifest-path "$here/Cargo.toml"
-    binary="$here/target/release/insomnia"
+    binary="$here/target/release/insomnia-awake"
 fi
 
 mkdir -p "$bin_dir" "$unit_dir" "$data_dir/applications" "$data_dir/icons/hicolor/scalable/apps"
 # Copy, then rename over the old binary, which may be running.
-cp "$binary" "$bin_dir/.insomnia.new"
-chmod 755 "$bin_dir/.insomnia.new"
-mv -f "$bin_dir/.insomnia.new" "$bin_dir/insomnia"
-cp "$here/packaging/insomnia.service" "$unit_dir/insomnia.service"
+cp "$binary" "$bin_dir/.insomnia-awake.new"
+chmod 755 "$bin_dir/.insomnia-awake.new"
+mv -f "$bin_dir/.insomnia-awake.new" "$bin_dir/insomnia-awake"
+cp "$here/packaging/insomnia-awake.service" "$unit_dir/insomnia-awake.service"
 desktop_exec=${bin_dir//\\/\\\\}
 desktop_exec=${desktop_exec//\"/\\\"}
 desktop_exec=${desktop_exec//\$/\\\$}
@@ -69,30 +69,30 @@ desktop_exec=${desktop_exec//\`/\\\`}
 desktop_exec=${desktop_exec//%/%%}
 while IFS= read -r line; do
     case "$line" in
-        Exec=*) printf 'Exec="%s/insomnia" prompt\n' "$desktop_exec" ;;
+        Exec=*) printf 'Exec="%s/insomnia-awake" prompt\n' "$desktop_exec" ;;
         *) printf '%s\n' "$line" ;;
     esac
-done <"$here/packaging/insomnia.desktop" >"$data_dir/applications/insomnia.desktop"
-cp "$here/packaging/insomnia.svg" "$data_dir/icons/hicolor/scalable/apps/insomnia.svg"
+done <"$here/packaging/insomnia-awake.desktop" >"$data_dir/applications/insomnia-awake.desktop"
+cp "$here/packaging/insomnia-awake.svg" "$data_dir/icons/hicolor/scalable/apps/insomnia-awake.svg"
 if command -v update-desktop-database >/dev/null; then
     update-desktop-database -q "$data_dir/applications" || true
 fi
 
 systemctl --user daemon-reload
-systemctl --user enable insomnia.service >/dev/null
-systemctl --user restart insomnia.service
+systemctl --user enable insomnia-awake.service >/dev/null
+systemctl --user restart insomnia-awake.service
 
 for _ in $(seq 50); do
-    busctl --user status app.getinsomnia.Insomnia >/dev/null 2>&1 && break
+    busctl --user status io.github.rafaelt0.InsomniaAwake >/dev/null 2>&1 && break
     sleep 0.1
 done
-if ! busctl --user status app.getinsomnia.Insomnia >/dev/null 2>&1; then
-    echo "Installed, but the daemon did not start. See: journalctl --user -u insomnia" >&2
+if ! busctl --user status io.github.rafaelt0.InsomniaAwake >/dev/null 2>&1; then
+    echo "Installed, but the daemon did not start. See: journalctl --user -u insomnia-awake" >&2
     exit 1
 fi
-echo "Installed $bin_dir/insomnia and started it."
+echo "Installed $bin_dir/insomnia-awake and started it."
 case ":$PATH:" in
     *":$bin_dir:"*) ;;
-    *) echo "Add $bin_dir to PATH to use the insomnia command." ;;
+    *) echo "Add $bin_dir to PATH to use the insomnia-awake command." ;;
 esac
-echo "Try: insomnia start 2h"
+echo "Try: insomnia-awake start 2h"

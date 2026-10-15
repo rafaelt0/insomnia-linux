@@ -1,4 +1,4 @@
-# Insomnia for Linux
+# Insomnia Awake
 
 Keep your computer awake for a set time, including with the lid closed.
 The eye in the tray opens a days, hours, and minutes prompt. Right-click it
@@ -16,7 +16,7 @@ git clone https://github.com/rafaelt0/insomnia-linux.git
 cd insomnia-linux
 ./deps.sh
 ./install.sh
-insomnia start 20m
+insomnia-awake start 20m
 ```
 
 `deps.sh` installs the build and runtime packages with your distribution's
@@ -47,15 +47,21 @@ without systemd are not supported. Laptops need UPower for battery protection.
 Audio muting uses PulseAudio or PipeWire's PulseAudio server. The power-saver
 action needs power-profiles-daemon with its hold API.
 
-The installer builds a release binary, installs it at `~/.local/bin/insomnia`,
+The installer builds a release binary, installs it at `~/.local/bin/insomnia-awake`,
 and starts a systemd user service. It installs a desktop launcher and eye icon
 under `$XDG_DATA_HOME`, or `~/.local/share`. The service starts with
 `graphical-session.target`. It needs no sudoers rule or root access.
 
 Run the installer again to upgrade. Restarting the service ends its current
-session. To open the prompt from your application launcher, choose **Insomnia**.
+session. To open the prompt from your application launcher, choose **Insomnia Awake**.
 If your desktop does not start `graphical-session.target`, run
-`systemctl --user start insomnia` after login.
+`systemctl --user start insomnia-awake` after login.
+
+### Upgrade from the previous name
+
+If you installed an earlier source build, follow the
+[upgrade instructions](docs/upgrade-from-insomnia.md) to preserve your settings
+and remove its old service before installing this version.
 
 ## Install a release without building
 
@@ -64,8 +70,8 @@ download for x86_64 that needs no Rust. It runs on distributions at least as
 new as Ubuntu 24.04, and needs GTK 4.12 or newer.
 
 ```bash
-tar -xJf insomnia-VERSION-x86_64-linux.tar.xz
-cd insomnia-VERSION-x86_64-linux
+tar -xJf insomnia-awake-VERSION-x86_64-linux.tar.xz
+cd insomnia-awake-VERSION-x86_64-linux
 ./install.sh
 ```
 
@@ -75,12 +81,12 @@ top right when gtk4-layer-shell is installed, and the plain one otherwise.
 ## Use the CLI
 
 ```bash
-insomnia start 2h30m
-insomnia extend 30m
-insomnia status
-insomnia end
-insomnia prompt
-insomnia quit
+insomnia-awake start 2h30m
+insomnia-awake extend 30m
+insomnia-awake status
+insomnia-awake end
+insomnia-awake prompt
+insomnia-awake quit
 ```
 
 `start` without a duration uses the default preset of one hour. A bare number
@@ -90,11 +96,11 @@ the prompt in add-time mode when a session is already active.
 
 ## Lid and battery behavior
 
-During a session, Insomnia holds logind's `sleep:handle-lid-switch` inhibitor.
-The tray and `insomnia status` report whether the lock was acquired. Desktop
+During a session, Insomnia Awake holds logind's `sleep:handle-lid-switch` inhibitor.
+The tray and `insomnia-awake status` report whether the lock was acquired. Desktop
 components that bypass logind's inhibitors are outside this port's control.
 
-With the lid closed, Insomnia saves and turns off the built-in panel's
+With the lid closed, Insomnia Awake saves and turns off the built-in panel's
 backlight, mutes outputs that were unmuted, and holds power-saver. Opening the
 lid or ending the session restores those changes. A screen brightness you set
 by hand during the close is kept. Outputs you had already muted stay muted.
@@ -113,8 +119,8 @@ the end floor is enabled. A desktop without a battery has no battery floors.
 ## Change settings
 
 The tray has switches for panel darkening, muting, and power-saver on lid close.
-Other settings are in `$XDG_CONFIG_HOME/insomnia/config.json`, or
-`~/.config/insomnia/config.json`:
+Other settings are in `$XDG_CONFIG_HOME/insomnia-awake/config.json`, or
+`~/.config/insomnia-awake/config.json`:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -126,13 +132,13 @@ Other settings are in `$XDG_CONFIG_HOME/insomnia/config.json`, or
 | `lowPowerFloor` | `40` | Hold power-saver below this battery percentage. |
 | `endFloor` | `10` | End below this percentage. `0` disables this rule. |
 
-After editing the file, run `systemctl --user reload insomnia`. Reloading keeps
+After editing the file, run `systemctl --user reload insomnia-awake`. Reloading keeps
 the current session. Invalid values are repaired and logged. Invalid JSON is
 moved aside and replaced with defaults.
 
 ## Recovery and logs
 
-State lives in `$XDG_STATE_HOME/insomnia`, or `~/.local/state/insomnia`.
+State lives in `$XDG_STATE_HOME/insomnia-awake`, or `~/.local/state/insomnia-awake`.
 The daemon writes the session deadline to `session.json` and saves audio and
 panel changes in `journal.json` before applying them. State files are written
 with owner-only permissions.
@@ -148,8 +154,8 @@ kept beside the original file for inspection. Read status warnings and the log
 if restoration fails:
 
 ```bash
-insomnia status
-journalctl --user -u insomnia
+insomnia-awake status
+journalctl --user -u insomnia-awake
 systemd-inhibit --list
 ```
 
@@ -184,9 +190,9 @@ It restores their initial state on exit. Run it on a laptop with a working
 backlight and power-profiles-daemon, while you can observe the screen:
 
 ```bash
-systemctl --user stop insomnia
+systemctl --user stop insomnia-awake
 ./tests/e2e.sh
-systemctl --user start insomnia
+systemctl --user start insomnia-awake
 ```
 
 `tests/prompt.sh` drives the installed prompt on Hyprland. It opens it from

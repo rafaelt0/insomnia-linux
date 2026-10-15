@@ -48,9 +48,9 @@ jobs:
           packaging/release.sh "$version" dist
       - name: Check the plain binary runs without gtk4-layer-shell
         run: |
-          ! ldd dist/insomnia-*/bin/insomnia-plain | grep -q layer-shell
-          ldd dist/insomnia-*/bin/insomnia | grep -q libgtk4-layer-shell.so.0
-          dist/insomnia-*/bin/insomnia-plain --help
+          ! ldd dist/insomnia-awake-*/bin/insomnia-awake-plain | grep -q layer-shell
+          ldd dist/insomnia-awake-*/bin/insomnia-awake | grep -q libgtk4-layer-shell.so.0
+          dist/insomnia-awake-*/bin/insomnia-awake-plain --help
       - name: Upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

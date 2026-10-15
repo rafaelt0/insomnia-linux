@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs what install.sh needs to build and run Insomnia, using this
+# Installs what install.sh needs to build and run Insomnia Awake, using this
 # distribution's package manager. Asks for your password through sudo.
 set -euo pipefail
 
@@ -42,7 +42,7 @@ case "$family" in
         exit 1 ;;
 esac
 
-rust=$(rustc --version 2>/dev/null | cut -d' ' -f2)
+rust=$(rustc --version 2>/dev/null | cut -d' ' -f2) || rust=
 if [ -z "$rust" ] || [ "$(printf '%s\n%s\n' "$min_rust" "$rust" | sort -V | head -1)" != "$min_rust" ]; then
     echo "This needs Rust $min_rust or newer, and this system has ${rust:-none}. Install it with rustup:" >&2
     echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" >&2
