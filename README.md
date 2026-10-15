@@ -144,6 +144,10 @@ cargo clippy --locked --all-targets -- -D warnings
 `tests/services.rs` runs the daemon on a private D-Bus with service fixtures.
 It does not change the host's audio, brightness, or power profile.
 
+`tests/uninstall.sh` runs the uninstaller in a throwaway home with stand-ins
+for `systemctl` and `busctl`. It checks that it refuses while something is
+still muted, dark, unreadable or mid-session, and removes everything otherwise.
+
 `tests/e2e.sh` runs the daemon against the host's logind, audio server, and
 power-profiles-daemon. It temporarily mutes outputs and turns the panel off.
 It restores their initial state on exit. Run it on a laptop with a working

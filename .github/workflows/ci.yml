@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Install native dependencies
-        run: pacman -Syu --noconfirm --needed base-devel rust gtk4 gtk4-layer-shell dbus shellcheck desktop-file-utils
+        run: pacman -Syu --noconfirm --needed base-devel rust gtk4 gtk4-layer-shell dbus jq shellcheck desktop-file-utils
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,9 +35,10 @@ jobs:
         run: |
           cargo test --locked
           cargo clippy --locked --all-targets -- -D warnings
-          bash -n install.sh uninstall.sh tests/e2e.sh tests/prompt.sh
-          shellcheck install.sh uninstall.sh tests/e2e.sh tests/prompt.sh
+          bash -n install.sh uninstall.sh tests/e2e.sh tests/prompt.sh tests/uninstall.sh
+          shellcheck install.sh uninstall.sh tests/e2e.sh tests/prompt.sh tests/uninstall.sh
           desktop-file-validate packaging/insomnia.desktop
+          tests/uninstall.sh
       - name: Build release
         run: cargo build --release --locked
 
