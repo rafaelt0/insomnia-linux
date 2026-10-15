@@ -17,7 +17,6 @@ for cmd in cargo pkg-config pactl systemctl busctl jq; do
 done
 if command -v pkg-config >/dev/null; then
 pkg-config --atleast-version=4.12 gtk4 || missing+=("GTK 4.12 or newer development files")
-pkg-config --exists gtk4-layer-shell-0 || missing+=("gtk4-layer-shell development files")
 fi
 if [ ${#missing[@]} -gt 0 ]; then
     printf 'Missing:\n' >&2
@@ -30,7 +29,12 @@ done
 busctl --system status org.freedesktop.UPower.PowerProfiles >/dev/null 2>&1 ||
     echo "Note: power-profiles-daemon is not running, so the power-saver lid action will report an error." >&2
 
-cargo build --release --locked --manifest-path "$here/Cargo.toml"
+features=()
+if ! pkg-config --exists gtk4-layer-shell-0; then
+    echo "Note: gtk4-layer-shell is not installed, so the prompt opens as an ordinary window." >&2
+    features=(--no-default-features)
+fi
+cargo build --release --locked "${features[@]}" --manifest-path "$here/Cargo.toml"
 
 mkdir -p "$bin_dir" "$unit_dir" "$data_dir/applications" "$data_dir/icons/hicolor/scalable/apps"
 # Copy, then rename over the old binary, which may be running.

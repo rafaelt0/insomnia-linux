@@ -11,9 +11,14 @@ Noctalia. Other desktops can use the CLI even without a tray host.
 
 ## Install from this checkout
 
-Install Rust with Cargo, a C compiler, pkg-config, GTK 4.12 or newer development
-files, and gtk4-layer-shell development files. The installer also checks for
-`pactl`, `jq`, `systemctl`, and `busctl`.
+Install Rust with Cargo, a C compiler, pkg-config, and GTK 4.12 or newer
+development files. The installer also checks for `pactl`, `jq`, `systemctl`,
+and `busctl`.
+
+gtk4-layer-shell is optional. With it, the prompt pins itself to the top right
+of the screen on Hyprland, Sway and other wlroots compositors, and on KDE.
+Without it, as on Ubuntu 24.04, which does not package it, the prompt opens as
+an ordinary window. The installer picks whichever applies.
 
 The desktop needs systemd-logind and a user D-Bus session. Laptops need UPower
 for battery protection. Audio muting uses PulseAudio or PipeWire's PulseAudio
@@ -162,5 +167,5 @@ every laptop. Test a short, observed session on your hardware first.
 This port does not include macOS app freezing, keyboard-backlight control,
 hotspot failover, tmux nudges, browser relaunch controls, or app-specific thermal
 rules. Kernel thermal protection and NetworkManager reconnection do not replace
-those features. GNOME and other desktops without layer-shell use an ordinary
+those features. GNOME, and any build without gtk4-layer-shell, use an ordinary
 GTK window for the prompt. A tray host is needed to display the eye.
