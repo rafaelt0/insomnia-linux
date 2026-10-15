@@ -4,7 +4,7 @@
 # Needs Hyprland 0.56 or newer, python3 with Atspi, and no running session.
 set -uo pipefail
 
-bin="$HOME/.local/bin/insomnia"
+bin="$HOME/.local/bin/insomnia-awake"
 failures=0
 check() {
     local what=$1; shift
@@ -12,7 +12,7 @@ check() {
 }
 
 if ! "$bin" status | grep -q '^No session.'; then
-    echo "End the running session first (insomnia end)." >&2
+    echo "End the running session first (insomnia-awake end)." >&2
     exit 1
 fi
 
@@ -22,7 +22,7 @@ prompt_closed() { ! prompt_open; }
 key() { hyprctl dispatch "hl.dsp.send_shortcut({ mods = \"\", key = \"$1\" })" >/dev/null; sleep 1; }
 open_from_tray() {
     local item
-    item=org.kde.StatusNotifierItem-$(systemctl --user show -p MainPID --value insomnia)-1
+    item=org.kde.StatusNotifierItem-$(systemctl --user show -p MainPID --value insomnia-awake)-1
     busctl --user call "$item" /StatusNotifierItem org.kde.StatusNotifierItem Activate ii 0 0
     for _ in $(seq 30); do prompt_open && break; sleep 0.1; done
     sleep 0.5
@@ -46,7 +46,7 @@ def walk(node):
 for _ in range(30):
     desktop = Atspi.get_desktop(0)
     apps = [desktop.get_child_at_index(i) for i in range(desktop.get_child_count())]
-    app = next((a for a in apps if a and (a.get_name() or "") == "insomnia"), None)
+    app = next((a for a in apps if a and (a.get_name() or "") == "insomnia-awake"), None)
     if app:
         break
     time.sleep(0.1)

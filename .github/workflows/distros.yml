@@ -54,4 +54,4 @@ jobs:
           if pkg-config --exists gtk4-layer-shell-0; then features=(); else features=(--no-default-features); fi
           echo "features: ${features[*]:-default}"
           cargo build --release --locked "${features[@]}"
-          ./target/release/insomnia --help
+          ./target/release/insomnia-awake --help

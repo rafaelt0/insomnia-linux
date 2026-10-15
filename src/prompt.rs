@@ -8,7 +8,7 @@ use gtk4::prelude::*;
 use gtk4::{gdk, glib};
 
 const CSS: &str = r#"
-window.insomnia-prompt { background: none; }
+window.insomnia-awake-prompt { background: none; }
 .panel { background: alpha(#202224, 0.98); border-radius: 18px; padding: 10px 12px; border: 1px solid alpha(#E6E3DD, 0.12); }
 .title { color: #E6E3DD; font-weight: 600; margin: 0 6px; }
 entry.pill { background: alpha(#E6E3DD, 0.08); color: #E6E3DD; border-radius: 999px; border: none; outline: none;
@@ -19,7 +19,7 @@ entry.pill:focus-within { background: alpha(#E6E3DD, 0.16); box-shadow: 0 0 0 3p
 "#;
 
 pub fn run(extend: bool) -> glib::ExitCode {
-    let app = gtk4::Application::builder().application_id("app.getinsomnia.Insomnia.Prompt").build();
+    let app = gtk4::Application::builder().application_id("io.github.rafaelt0.InsomniaAwake.Prompt").build();
     app.connect_activate(move |app| build(app, extend));
     app.run_with_args(&[] as &[&str])
 }
@@ -37,8 +37,8 @@ fn build(app: &gtk4::Application, extend: bool) {
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 
-    let window = gtk4::ApplicationWindow::builder().application(app).title("Insomnia").resizable(false).build();
-    window.add_css_class("insomnia-prompt");
+    let window = gtk4::ApplicationWindow::builder().application(app).title("Insomnia Awake").resizable(false).build();
+    window.add_css_class("insomnia-awake-prompt");
     pin_top_right(&window);
 
     let fields: Vec<gtk4::Entry> = ["Days", "Hours", "Minutes"]
@@ -93,7 +93,7 @@ fn pin_top_right(window: &gtk4::ApplicationWindow) {
         return;
     }
     window.init_layer_shell();
-    window.set_namespace(Some("insomnia"));
+    window.set_namespace(Some("insomnia-awake"));
     window.set_layer(Layer::Overlay);
     window.set_anchor(Edge::Top, true);
     window.set_anchor(Edge::Right, true);

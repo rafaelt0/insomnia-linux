@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=Insomnia
+Name=Insomnia Awake
 GenericName=Keep Awake
 Comment=Keep this computer awake for a set time, even with the lid closed
-Exec=insomnia prompt
-Icon=insomnia
+Exec=insomnia-awake prompt
+Icon=insomnia-awake
 Terminal=false
 Categories=Utility;
 Keywords=awake;sleep;suspend;caffeine;lid;

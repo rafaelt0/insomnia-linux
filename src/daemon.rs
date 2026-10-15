@@ -13,8 +13,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, sleep_until};
 use zbus::zvariant::OwnedFd;
 
-pub const BUS_NAME: &str = "app.getinsomnia.Insomnia";
-pub const OBJECT_PATH: &str = "/app/getinsomnia/Insomnia";
+pub const BUS_NAME: &str = "io.github.rafaelt0.InsomniaAwake";
+pub const OBJECT_PATH: &str = "/io/github/rafaelt0/InsomniaAwake";
 const LID_DEBOUNCE: Duration = Duration::from_secs(2);
 const RETRY_UNDO: Duration = Duration::from_secs(30);
 
@@ -45,7 +45,7 @@ struct Service {
     events: mpsc::Sender<Event>,
 }
 
-#[zbus::interface(name = "app.getinsomnia.Insomnia1")]
+#[zbus::interface(name = "io.github.rafaelt0.InsomniaAwake1")]
 impl Service {
     async fn start(&self, seconds: u64) -> zbus::fdo::Result<String> {
         self.ask(Command::Start(seconds)).await
@@ -79,7 +79,7 @@ impl Service {
 impl Service {
     async fn ask(&self, command: Command) -> zbus::fdo::Result<String> {
         let (tx, rx) = oneshot::channel();
-        let gone = || zbus::fdo::Error::Failed("Insomnia is shutting down".into());
+        let gone = || zbus::fdo::Error::Failed("Insomnia Awake is shutting down".into());
         self.events.send(Event::Command(command, Some(tx))).await.map_err(|_| gone())?;
         rx.await.map_err(|_| gone())?.map_err(zbus::fdo::Error::Failed)
     }
@@ -120,7 +120,7 @@ pub async fn run() -> Result<(), String> {
         .build()
         .await
         .map_err(|e| match e {
-            zbus::Error::NameTaken => "Insomnia is already running".to_string(),
+            zbus::Error::NameTaken => "Insomnia Awake is already running".to_string(),
             e => format!("could not claim {BUS_NAME} on the session bus: {e}"),
         })?;
     let sys = System::connect(&session_bus).await.map_err(|e| format!("could not reach a system service: {e}"))?;
@@ -186,7 +186,7 @@ pub async fn run() -> Result<(), String> {
             event = rx.recv() => match event {
                 Some(Event::Command(Command::Quit, reply)) => {
                     d.shutdown().await;
-                    if let Some(reply) = reply { let _ = reply.send(Ok("Insomnia quit.".into())); }
+                    if let Some(reply) = reply { let _ = reply.send(Ok("Insomnia Awake quit.".into())); }
                     break;
                 }
                 Some(Event::Command(command, reply)) => {
@@ -194,7 +194,7 @@ pub async fn run() -> Result<(), String> {
                     if let Some(reply) = reply {
                         let _ = reply.send(answer);
                     } else if let Err(e) = answer {
-                        d.sys.notify("Insomnia could not complete the action", &e).await;
+                        d.sys.notify("Insomnia Awake could not complete the action", &e).await;
                         d.note(e);
                     }
                 }
@@ -213,7 +213,7 @@ pub async fn run() -> Result<(), String> {
                 lid_settles_at = None;
                 match d.sys.lid().await {
                     Ok(lid) => d.lid = lid,
-                    Err(e) => eprintln!("insomnia: could not read the lid: {e}"),
+                    Err(e) => eprintln!("insomnia-awake: could not read the lid: {e}"),
                 }
             }
             _ = sleep_until(next_wake.unwrap_or_else(Instant::now)), if next_wake.is_some() => {
@@ -264,12 +264,12 @@ impl Daemon {
             Loaded::Ok(s) if s.ends_at > now() => self.session = Some(s),
             Loaded::Ok(_) => {
                 let _ = self.store.delete_session();
-                self.sys.notify("Insomnia session ended", "It ran out while Insomnia was not running.").await;
+                self.sys.notify("Insomnia Awake session ended", "It ran out while Insomnia Awake was not running.").await;
             }
             Loaded::Missing => {}
             Loaded::MovedAside(to) => {
                 let line = format!("The session file could not be read, so the session was treated as ended. It was moved to {}.", to.display());
-                self.sys.notify("Insomnia session ended", &line).await;
+                self.sys.notify("Insomnia Awake session ended", &line).await;
                 self.notes.push(line);
             }
         }
@@ -293,7 +293,7 @@ impl Daemon {
             }
             Err(e) => {
                 self.power_failures += 1;
-                eprintln!("insomnia: could not read the battery ({} in a row): {e}", self.power_failures);
+                eprintln!("insomnia-awake: could not read the battery ({} in a row): {e}", self.power_failures);
                 if self.power_failures >= 2 {
                     self.power = Power::Unreadable;
                 }
@@ -337,7 +337,7 @@ impl Daemon {
         {
             self.reminded_for = Some(s.ends_at);
             let body = format!("The session ends in {}. Add time from the tray to keep going.", model::format_remaining(s.remaining(now())));
-            self.sys.notify("Insomnia ends soon", &body).await;
+            self.sys.notify("Insomnia Awake ends soon", &body).await;
         }
     }
 
@@ -478,7 +478,7 @@ impl Daemon {
     }
 
     fn note(&mut self, line: String) {
-        eprintln!("insomnia: {line}");
+        eprintln!("insomnia-awake: {line}");
         if !self.notes.contains(&line) {
             self.notes.push(line);
         }
@@ -496,7 +496,7 @@ impl Daemon {
         if let Err(e) = self.store.delete_session() {
             self.notes.push(format!("The session file could not be removed: {e}"));
         }
-        self.sys.notify("Insomnia session ended", &reason.describe()).await;
+        self.sys.notify("Insomnia Awake session ended", &reason.describe()).await;
     }
 
     async fn shutdown(&mut self) {
@@ -564,12 +564,12 @@ impl Daemon {
         }
     }
 
-    /// At launch and on SIGHUP (`systemctl --user reload insomnia`), so a
+    /// At launch and on SIGHUP (`systemctl --user reload insomnia-awake`), so a
     /// hand edit to config.json applies without ending the session.
     fn reload_config(&mut self) {
         let (config, notes) = self.store.load_config();
         for note in notes {
-            eprintln!("insomnia: config: {note}");
+            eprintln!("insomnia-awake: config: {note}");
         }
         self.config = config;
     }
@@ -645,7 +645,7 @@ impl Daemon {
 fn saver_cause_text(cause: SaverCause) -> &'static str {
     match cause {
         SaverCause::BatteryFloor => "battery below the low-power floor",
-        SaverCause::LidClosed => "lid closed during an Insomnia session",
+        SaverCause::LidClosed => "lid closed during an Insomnia Awake session",
     }
 }
 

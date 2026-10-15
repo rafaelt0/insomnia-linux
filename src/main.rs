@@ -6,19 +6,20 @@ mod store;
 mod system;
 mod tray;
 
+use std::io::{self, Write};
 use std::process::ExitCode;
 
 const USAGE: &str = "\
 Keep this computer awake for a set time, even with the lid closed.
 
 Usage:
-  insomnia                    run the tray daemon (normally started by systemd)
-  insomnia start [DURATION]   keep awake for DURATION, or the default preset
-  insomnia extend DURATION    add time to the running session
-  insomnia end                end the session now
-  insomnia status             show the session, lid, battery and held changes
-  insomnia prompt [--extend]  open the Days / Hours / Minutes entry
-  insomnia quit               end the session and stop the daemon
+  insomnia-awake                    run the tray daemon (normally started by systemd)
+  insomnia-awake start [DURATION]   keep awake for DURATION, or the default preset
+  insomnia-awake extend DURATION    add time to the running session
+  insomnia-awake end                end the session now
+  insomnia-awake status             show the session, lid, battery and held changes
+  insomnia-awake prompt [--extend]  open the Days / Hours / Minutes entry
+  insomnia-awake quit               end the session and stop the daemon
 
 DURATION is a number of minutes, or units such as 45m, 2h30m, 1d 4h.
 The longest session is 30 days.";
@@ -39,14 +40,14 @@ fn parse(args: &[String]) -> Result<Cli, String> {
     let rest = || args[1..].join(" ");
     let one = |what: &str| match args.len() {
         1 => Ok(()),
-        _ => Err(format!("`insomnia {what}` takes no arguments")),
+        _ => Err(format!("`insomnia-awake {what}` takes no arguments")),
     };
     let Some(verb) = args.first() else { return Ok(Cli::Daemon) };
     match verb.as_str() {
         "daemon" => one("daemon").map(|_| Cli::Daemon),
         "start" if args.len() == 1 => Ok(Cli::Start(0)),
         "start" => model::parse_duration(&rest()).map(Cli::Start),
-        "extend" if args.len() == 1 => Err("`insomnia extend` needs a duration, such as 30m".into()),
+        "extend" if args.len() == 1 => Err("`insomnia-awake extend` needs a duration, such as 30m".into()),
         "extend" => model::parse_duration(&rest()).map(Cli::Extend),
         "end" => one("end").map(|_| Cli::End),
         "status" => one("status").map(|_| Cli::Status),
@@ -54,11 +55,22 @@ fn parse(args: &[String]) -> Result<Cli, String> {
         "prompt" => match &args[1..] {
             [] => Ok(Cli::Prompt { extend: false }),
             [flag] if flag == "--extend" => Ok(Cli::Prompt { extend: true }),
-            _ => Err("`insomnia prompt` takes only --extend".into()),
+            _ => Err("`insomnia-awake prompt` takes only --extend".into()),
         },
         "simulate-lid" if args.len() == 2 => Ok(Cli::SimulateLid(args[1].clone())),
         "help" | "-h" | "--help" => Ok(Cli::Help),
         other => Err(format!("unknown command {other:?}")),
+    }
+}
+
+fn print_output(text: &str) -> ExitCode {
+    match writeln!(io::stdout().lock(), "{text}") {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("insomnia-awake: {e}");
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -67,21 +79,20 @@ fn main() -> ExitCode {
     let cli = match parse(&args) {
         Ok(cli) => cli,
         Err(e) => {
-            eprintln!("insomnia: {e}\n\n{USAGE}");
+            eprintln!("insomnia-awake: {e}\n\n{USAGE}");
             return ExitCode::from(2);
         }
     };
     let answer = match cli {
         Cli::Help => {
-            println!("{USAGE}");
-            return ExitCode::SUCCESS;
+            return print_output(USAGE);
         }
         Cli::Daemon => {
             let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a tokio runtime");
             return match runtime.block_on(daemon::run()) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
-                    eprintln!("insomnia: {e}");
+                    eprintln!("insomnia-awake: {e}");
                     ExitCode::FAILURE
                 }
             };
@@ -99,12 +110,12 @@ fn main() -> ExitCode {
     match answer {
         Ok(text) => {
             if !text.is_empty() {
-                println!("{text}");
+                return print_output(&text);
             }
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("insomnia: {e}");
+            eprintln!("insomnia-awake: {e}");
             ExitCode::FAILURE
         }
     }

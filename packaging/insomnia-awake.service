@@ -1,11 +1,11 @@
 [Unit]
-Description=Insomnia, timed awake sessions
+Description=Insomnia Awake, timed awake sessions
 Documentation=https://github.com/rafaelt0/insomnia-linux#readme
 PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]
-ExecStart=%h/.local/bin/insomnia
+ExecStart=%h/.local/bin/insomnia-awake
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=2
