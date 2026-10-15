@@ -1,0 +1,57 @@
+name: Distributions
+
+# Follows the README on a fresh container of each distribution: deps.sh,
+# rustup where the packaged Rust is too old, then the build install.sh runs.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: archlinux:latest
+          - image: fedora:latest
+          - image: opensuse/tumbleweed:latest
+          - image: debian:13
+            rustup: true
+          - image: ubuntu:24.04
+            rustup: true
+          - image: ubuntu:26.04
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust with rustup, as deps.sh tells this distribution to
+        if: matrix.rustup
+        run: |
+          apt-get update
+          apt-get install -y curl ca-certificates
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Install dependencies with deps.sh
+        run: bash deps.sh
+      - name: Build as install.sh does
+        run: |
+          if pkg-config --exists gtk4-layer-shell-0; then features=(); else features=(--no-default-features); fi
+          echo "features: ${features[*]:-default}"
+          cargo build --release --locked "${features[@]}"
+          ./target/release/insomnia --help
